@@ -57,6 +57,8 @@ ai-service/embeddings/
 *.webm
 *.ts
 !backend/**/*.ts
+!frontend/src/api/**/*.ts
+!frontend/src/hooks/**/*.ts
 
 # CCTV / classroom recordings
 data/videos/
