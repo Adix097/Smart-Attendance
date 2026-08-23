@@ -94,8 +94,3 @@ desktop.ini
 *.sqlite3
 *.db
 *.dump
-
-# Local Copilot configuration
-.github/copilot-instructions.md
-.github/prompts/
-.github/skills/
