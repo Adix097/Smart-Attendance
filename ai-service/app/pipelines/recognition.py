@@ -8,11 +8,18 @@ from typing import Any
 import cv2
 
 from app.config import InferenceConfig
-from app.recognition.aggregation import Observation, aggregate_observations
+from app.recognition.aggregation import (
+    Observation,
+    aggregate_observations,
+    status_for_sighting,
+)
 from app.recognition.gallery import load_gallery
 from app.recognition.matching import match_embedding
+from app.recognition.tracking import Box, LightweightTracker
 from app.schemas import (
+    BoundingBox,
     InferenceResponse,
+    RecognitionSighting,
     SamplingConfiguration,
     VideoMetadata,
 )
@@ -67,6 +74,8 @@ def run_video_inference(
     reported_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     frame_interval = _frame_interval(source_fps, config.sampling_fps)
     observations: list[Observation] = []
+    sightings: list[RecognitionSighting] = []
+    tracker = LightweightTracker()
     sampled_frames = 0
     detected_faces = 0
     frame_index = 0
@@ -84,7 +93,17 @@ def run_video_inference(
             sampled_frames += 1
             faces = analysis.get(frame)
             detected_faces += len(faces)
-            for face in faces:
+            boxes = [
+                Box(
+                    x=float(face.bbox[0]),
+                    y=float(face.bbox[1]),
+                    width=float(face.bbox[2] - face.bbox[0]),
+                    height=float(face.bbox[3] - face.bbox[1]),
+                )
+                for face in faces
+            ]
+            tracker_ids = tracker.update(boxes, frame_index)
+            for face_index, face in enumerate(faces):
                 try:
                     match = match_embedding(face.embedding, gallery)
                 except ValueError as error:
@@ -102,6 +121,34 @@ def run_video_inference(
                         similarity=match.best_similarity,
                         second_best_similarity=match.second_best_similarity,
                         identity_margin=match.identity_margin,
+                    )
+                )
+                box = boxes[face_index]
+                sightings.append(
+                    RecognitionSighting(
+                        timestamp_seconds=(
+                            frame_index / source_fps if source_fps > 0 else 0.0
+                        ),
+                        tracker_id=tracker_ids[face_index],
+                        identity=identity,
+                        status=status_for_sighting(
+                            match.best_similarity,
+                            match.identity_margin,
+                            config,
+                        ),
+                        best_similarity=match.best_similarity,
+                        second_best_similarity=match.second_best_similarity,
+                        identity_margin=match.identity_margin,
+                        bbox=(
+                            BoundingBox(
+                                x=box.x,
+                                y=box.y,
+                                width=box.width,
+                                height=box.height,
+                            )
+                            if box is not None
+                            else None
+                        ),
                     )
                 )
             frame_index += 1
@@ -138,6 +185,7 @@ def run_video_inference(
         detected_faces=detected_faces,
         sampled_frames=sampled_frames,
         results=aggregate_observations(observations, config),
+        sightings=sightings,
         errors=[],
         warnings=warnings,
     )

@@ -6,6 +6,7 @@ from app.config import InferenceConfig
 from app.recognition.aggregation import Observation, aggregate_observations
 from app.recognition.gallery import EnrollmentGallery, normalize_embedding
 from app.recognition.matching import match_embedding
+from app.recognition.tracking import Box, LightweightTracker
 
 
 def config(**overrides: object) -> InferenceConfig:
@@ -85,6 +86,17 @@ class RecognitionTests(unittest.TestCase):
         result = aggregate_observations(observations, config())[0]
 
         self.assertEqual(result.status, "uncertain")
+
+    def test_tracker_keeps_id_for_nearby_boxes(self) -> None:
+        tracker = LightweightTracker()
+        first = tracker.update([Box(10, 10, 20, 20)], 0)[0]
+        second = tracker.update([Box(12, 11, 20, 20)], 1)[0]
+        self.assertEqual(first, second)
+
+    def test_tracker_assigns_distinct_ids(self) -> None:
+        tracker = LightweightTracker()
+        ids = tracker.update([Box(0, 0, 10, 10), Box(100, 100, 10, 10)], 0)
+        self.assertEqual(len(set(ids)), 2)
 
 
 if __name__ == "__main__":

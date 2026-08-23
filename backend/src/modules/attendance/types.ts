@@ -25,6 +25,25 @@ export interface AttendanceSession {
   processingError: string | null;
 }
 
+export interface EnrolledStudent {
+  id: string;
+  studentNumber: string;
+  name: string;
+  batch: string | null;
+  group: string | null;
+}
+
+export interface ClassSessionOption {
+  id: string;
+  courseCode: string;
+  courseTitle: string;
+  facultyName: string;
+  classroomName: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+  students: EnrolledStudent[];
+}
+
 export interface AIObservationInput {
   id: string;
   studentId: string | null;
@@ -42,6 +61,23 @@ export interface AttendanceObservation extends AIObservationInput {
   attendanceSessionId: string;
 }
 
+export interface AttendanceSightingInput {
+  id: string;
+  studentId: string | null;
+  trackerId: string;
+  observedAt: string;
+  cameraId: string | null;
+  similarity: number | null;
+  x: number | null;
+  y: number | null;
+}
+
+export interface AttendanceContext {
+  scheduledStart: string;
+  scheduledEnd: string;
+  entryDeadline: string;
+}
+
 export interface ProvisionalAttendanceInput {
   id: string;
   attendanceSessionId: string;
@@ -50,23 +86,53 @@ export interface ProvisionalAttendanceInput {
   source: AttendanceSource;
   confidence: number | null;
   evidenceObservationId: string | null;
+  verificationResult?: string | null;
+  firstSeen?: string | null;
+  lastSeen?: string | null;
+  totalSightings?: number;
+  lateEntry?: boolean;
 }
 
 export interface AttendanceRecord extends ProvisionalAttendanceInput {
   finalizedBy: string | null;
   finalizedAt: string | null;
+  verificationResult: string | null;
+  firstSeen: string | null;
+  lastSeen: string | null;
+  totalSightings: number;
+  lateEntry: boolean;
 }
 
 export interface FinalizeAttendanceInput {
   recordId: string;
   attendanceSessionId: string;
-  finalizedBy: string;
+  finalizedBy: string | null;
   status?: AttendanceRecordStatus;
 }
 
 export interface AttendanceRepository {
   classSessionExists(classSessionId: string): Promise<boolean>;
   getEnrolledStudentIds(classSessionId: string): Promise<string[]>;
+  ensureUpcomingClassSession(): Promise<void>;
+  getClassSessionOptions(): Promise<ClassSessionOption[]>;
+  getEnrolledStudents(classSessionId: string): Promise<EnrolledStudent[]>;
+  createAttendanceContext(
+    attendanceSessionId: string,
+    classSessionId: string,
+  ): Promise<void>;
+  getExpectedStudents(attendanceSessionId: string): Promise<EnrolledStudent[]>;
+  getStudentIdentityMap(): Promise<Map<string, string>>;
+  getAttendanceContext(attendanceSessionId: string): Promise<AttendanceContext | null>;
+  storeAttendanceSightings(
+    attendanceSessionId: string,
+    sightings: AttendanceSightingInput[],
+  ): Promise<void>;
+  storeOccupancySnapshot(
+    attendanceSessionId: string,
+    observedAt: string,
+    expectedCount: number,
+    observedCount: number,
+  ): Promise<void>;
   createAttendanceSession(
     input: CreateAttendanceSessionInput,
   ): Promise<AttendanceSession>;

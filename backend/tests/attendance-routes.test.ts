@@ -15,9 +15,13 @@ import type {
   AttendanceRepository,
   AttendanceSession,
   AttendanceSessionDatabaseStatus,
+  AttendanceContext,
+  AttendanceSightingInput,
+  ClassSessionOption,
   CreateAttendanceSessionInput,
   FinalizeAttendanceInput,
   ProvisionalAttendanceInput,
+  EnrolledStudent,
 } from '../src/modules/attendance/types.js';
 
 class MockAttendanceRepository implements AttendanceRepository {
@@ -26,6 +30,8 @@ class MockAttendanceRepository implements AttendanceRepository {
   readonly sessions = new Map<string, AttendanceSession>();
   readonly observations: AttendanceObservation[] = [];
   readonly records = new Map<string, AttendanceRecord>();
+  readonly sightings: AttendanceSightingInput[] = [];
+  readonly occupancy: Array<{ expected: number; observed: number }> = [];
 
   classSessionExists(classSessionId: string): Promise<boolean> {
     return Promise.resolve(this.classSessions.has(classSessionId));
@@ -33,6 +39,82 @@ class MockAttendanceRepository implements AttendanceRepository {
 
   getEnrolledStudentIds(classSessionId: string): Promise<string[]> {
     return Promise.resolve(this.enrolled.get(classSessionId) ?? []);
+  }
+
+  ensureUpcomingClassSession(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  getEnrolledStudents(classSessionId: string): Promise<EnrolledStudent[]> {
+    return Promise.resolve(
+      (this.enrolled.get(classSessionId) ?? []).map((id) => ({
+        id,
+        studentNumber: id,
+        name: id,
+        batch: null,
+        group: null,
+      })),
+    );
+  }
+
+  createAttendanceContext(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  getExpectedStudents(): Promise<EnrolledStudent[]> {
+    return this.getEnrolledStudents('class-1');
+  }
+
+  getStudentIdentityMap(): Promise<Map<string, string>> {
+    return Promise.resolve(new Map([
+      ['student-a', 'student-a'],
+      ['student-b', 'student-b'],
+    ]));
+  }
+
+  getAttendanceContext(): Promise<AttendanceContext | null> {
+    return Promise.resolve({
+      scheduledStart: '2026-08-24T11:00:00.000Z',
+      scheduledEnd: '2026-08-24T13:00:00.000Z',
+      entryDeadline: '2026-08-24T11:15:00.000Z',
+    });
+  }
+
+  storeAttendanceSightings(
+    _attendanceSessionId: string,
+    sightings: AttendanceSightingInput[],
+  ): Promise<void> {
+    this.sightings.push(...sightings);
+    return Promise.resolve();
+  }
+
+  storeOccupancySnapshot(
+    _sessionId: string,
+    _observedAt: string,
+    expectedCount: number,
+    observedCount: number,
+  ): Promise<void> {
+    this.occupancy.push({ expected: expectedCount, observed: observedCount });
+    return Promise.resolve();
+  }
+
+  getClassSessionOptions(): Promise<ClassSessionOption[]> {
+    return Promise.resolve([{
+      id: 'class-1',
+      courseCode: 'ARD253',
+      courseTitle: 'Computer Networking (Lab)',
+      facultyName: 'Mr. Anuj Kumar',
+      classroomName: 'AUB-03-Com Lab',
+      scheduledStart: '2026-08-24T11:00:00.000Z',
+      scheduledEnd: '2026-08-24T13:00:00.000Z',
+      students: [{
+        id: 'student-a',
+        studentNumber: '14119051925',
+        name: 'aditya vishwakarma',
+        batch: 'B2',
+        group: 'B',
+      }],
+    }]);
   }
 
   createAttendanceSession(input: CreateAttendanceSessionInput): Promise<AttendanceSession> {
@@ -86,6 +168,11 @@ class MockAttendanceRepository implements AttendanceRepository {
       id: existing?.id ?? input.id,
       finalizedBy: existing?.finalizedBy ?? null,
       finalizedAt: existing?.finalizedAt ?? null,
+      verificationResult: input.verificationResult ?? null,
+      firstSeen: input.firstSeen ?? null,
+      lastSeen: input.lastSeen ?? null,
+      totalSightings: input.totalSightings ?? 0,
+      lateEntry: input.lateEntry ?? false,
     };
     this.records.set(record.id, record);
     return Promise.resolve(record);
@@ -135,7 +222,7 @@ const inferenceResponse: AIInferenceResponse = {
   sampled_frames: 8,
   results: [
     {
-      identity: 'demo-a',
+      identity: 'student-a',
       status: 'confirmed',
       observation_count: 5,
       best_similarity: 0.91,
@@ -144,7 +231,7 @@ const inferenceResponse: AIInferenceResponse = {
       identity_margin: 0.59,
     },
     {
-      identity: 'demo-b',
+      identity: 'student-b',
       status: 'uncertain',
       observation_count: 2,
       best_similarity: 0.68,
@@ -164,6 +251,36 @@ const inferenceResponse: AIInferenceResponse = {
   ],
   errors: [],
   warnings: [],
+  sightings: [
+    {
+      timestamp_seconds: 0,
+      tracker_id: 'track-001',
+      identity: 'student-a',
+      status: 'confirmed',
+      best_similarity: 0.91,
+      second_best_similarity: 0.32,
+      identity_margin: 0.59,
+      bbox: { x: 10, y: 10, width: 20, height: 20 },
+    },
+    {
+      timestamp_seconds: 5400,
+      tracker_id: 'track-001',
+      identity: 'student-a',
+      status: 'confirmed',
+      best_similarity: 0.91,
+      second_best_similarity: 0.32,
+      identity_margin: 0.59,
+    },
+    {
+      timestamp_seconds: 7199,
+      tracker_id: 'track-001',
+      identity: 'student-a',
+      status: 'confirmed',
+      best_similarity: 0.91,
+      second_best_similarity: 0.32,
+      identity_margin: 0.59,
+    },
+  ],
 };
 
 let server: Server;
@@ -218,6 +335,15 @@ describe('attendance session API', () => {
     const response = await postJson('/api/attendance-sessions', {
       class_session_id: 'class-1',
     });
+
+    it('retrieves persisted class-session options with enrolled students', async () => {
+      const response = await request('/api/attendance-classes');
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.equal(body.classes[0].courseCode, 'ARD253');
+      assert.equal(body.classes[0].students[0].studentNumber, '14119051925');
+    });
     const body = await response.json();
 
     assert.equal(response.status, 201);
@@ -231,10 +357,6 @@ describe('attendance session API', () => {
     const response = await postJson(`/api/attendance-sessions/${sessionId}/process`, {
       video_path: 'C:\\demo\\classroom.mp4',
       enrollment_dir: 'C:\\demo\\enrollment',
-      identity_student_ids: {
-        'demo-a': 'student-a',
-        'demo-b': 'student-b',
-      },
     });
     const body = await response.json();
 
@@ -242,6 +364,8 @@ describe('attendance session API', () => {
     assert.equal(body.session.status, 'completed');
     assert.equal(body.observation_count, 3);
     assert.equal(repository.observations.length, 3);
+    assert.equal(repository.sightings.length, 3);
+    assert.deepEqual(repository.occupancy[0], { expected: 3, observed: 1 });
     assert.deepEqual(
       repository.observations.map((observation) => [
         observation.studentId,

@@ -21,8 +21,13 @@ import type {
   AttendanceRecordStatus,
   AttendanceRepository,
   AttendanceSessionDatabaseStatus,
-  ObservationStatus,
 } from './types.js';
+import { config } from '../../config.js';
+import {
+  calculateOccupancy,
+  defaultVerificationConfig,
+  verifyStudent,
+} from './verification.js';
 
 type InferenceHandler = (
   request: AIInferenceRequest,
@@ -35,13 +40,11 @@ export interface AttendanceRouteDependencies {
 
 type SessionStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
-interface ProcessRequest extends AIInferenceRequest {
-  identity_student_ids?: Record<string, string>;
-}
+interface ProcessRequest extends Omit<AIInferenceRequest, 'enrollment_dir'> {}
 
 interface FinalizeRequest {
   record_id: string;
-  finalized_by: string;
+  finalized_by?: string;
   status?: AttendanceRecordStatus;
 }
 
@@ -59,19 +62,12 @@ const isProcessRequest = (value: unknown): value is ProcessRequest => {
   if (
     typeof value !== 'object' ||
     value === null ||
-    !isNonEmptyString((value as Record<string, unknown>).video_path) ||
-    !isNonEmptyString((value as Record<string, unknown>).enrollment_dir)
+    !isNonEmptyString((value as Record<string, unknown>).video_path)
   ) {
     return false;
   }
 
-  const mapping = (value as Record<string, unknown>).identity_student_ids;
-  return (
-    mapping === undefined ||
-    (typeof mapping === 'object' &&
-      mapping !== null &&
-      Object.values(mapping).every(isNonEmptyString))
-  );
+  return true;
 };
 
 const isFinalizeRequest = (value: unknown): value is FinalizeRequest => {
@@ -79,6 +75,7 @@ const isFinalizeRequest = (value: unknown): value is FinalizeRequest => {
     typeof value !== 'object' ||
     value === null ||
     !isNonEmptyString((value as Record<string, unknown>).record_id) ||
+    (value as Record<string, unknown>).finalized_by !== undefined &&
     !isNonEmptyString((value as Record<string, unknown>).finalized_by)
   ) {
     return false;
@@ -113,24 +110,16 @@ function sessionResponse(session: {
   };
 }
 
-function isKnownIdentity(
-  identity: string,
-  enrolledStudentIds: Set<string>,
-  mapping: Record<string, string> | undefined,
-): string | null {
-  const mapped = mapping?.[identity] ?? identity;
-  return enrolledStudentIds.has(mapped) ? mapped : null;
-}
-
-function resultStatus(status: ObservationStatus): 'present' | 'uncertain' {
-  return status === 'confirmed' ? 'present' : 'uncertain';
-}
-
 export function createAttendanceRouter({
   repository,
   inferenceHandler = requestAIInference,
 }: AttendanceRouteDependencies): Router {
   const router = Router();
+
+  router.get('/attendance-classes', async (_request, response) => {
+    await repository.ensureUpcomingClassSession();
+    response.json({ classes: await repository.getClassSessionOptions() });
+  });
 
   router.post('/attendance-sessions', async (request, response) => {
     if (!isCreateRequest(request.body)) {
@@ -158,6 +147,7 @@ export function createAttendanceRouter({
       classSessionId: request.body.class_session_id,
       status: 'open',
     });
+    await repository.createAttendanceContext(session.id, session.classSessionId);
     response.status(201).json(sessionResponse(session));
   });
 
@@ -182,19 +172,21 @@ export function createAttendanceRouter({
       });
       return;
     }
+    if (session.status === 'ready_for_review' || session.status === 'finalized') {
+      response.json({
+        session: sessionResponse(session),
+        observation_count: 0,
+      });
+      return;
+    }
 
-    const enrolledStudentIds = new Set(
-      await repository.getEnrolledStudentIds(session.classSessionId),
-    );
-    const mapping = request.body.identity_student_ids;
-    if (
-      mapping &&
-      Object.values(mapping).some((studentId) => !enrolledStudentIds.has(studentId))
-    ) {
+    const enrolledStudents = await repository.getExpectedStudents(session.id);
+    const globalIdentityMap = await repository.getStudentIdentityMap();
+    if (enrolledStudents.length === 0) {
       response.status(400).json({
         error: {
-          code: 'INVALID_ENROLLMENT_REFERENCE',
-          message: 'identity_student_ids must reference enrolled students',
+          code: 'NO_ENROLLED_STUDENTS',
+          message: 'The selected class session has no enrolled students',
         },
       });
       return;
@@ -205,7 +197,7 @@ export function createAttendanceRouter({
     try {
       const inferenceRequest: AIInferenceRequest = {
         video_path: request.body.video_path,
-        enrollment_dir: request.body.enrollment_dir,
+        enrollment_dir: config.enrollmentRoot,
         model_name: request.body.model_name,
         provider: request.body.provider,
         sampling_fps: request.body.sampling_fps,
@@ -220,14 +212,83 @@ export function createAttendanceRouter({
         throw new InferenceProcessingError(inference.errors.join('; '));
       }
 
+      const context = await repository.getAttendanceContext(session.id);
+      if (!context) {
+        throw new InferenceProcessingError('Attendance context is missing');
+      }
+      const expectedStudentIds = new Set(enrolledStudents.map((student) => student.id));
+      const sightings = (inference.sightings ?? []).map((sighting) => {
+        const studentId =
+          sighting.identity === null
+            ? null
+            : globalIdentityMap.get(sighting.identity) ?? null;
+        const observedAt = new Date(
+          new Date(context.scheduledStart).getTime() +
+            sighting.timestamp_seconds * 1000,
+        );
+        return {
+          id: crypto.randomUUID(),
+          studentId,
+          trackerId: sighting.tracker_id,
+          observedAt: observedAt.toISOString(),
+          cameraId: sighting.camera_id ?? null,
+          similarity: sighting.best_similarity,
+          x: sighting.bbox?.x ?? null,
+          y: sighting.bbox?.y ?? null,
+          recognitionStatus: sighting.status,
+        };
+      });
+      await repository.storeAttendanceSightings(session.id, sightings);
+      if (sightings.length > 0) {
+        const snapshots = new Map<string, Set<string>>();
+        for (const sighting of sightings) {
+          if (
+            sighting.recognitionStatus !== 'confirmed' ||
+            sighting.studentId === null ||
+            !expectedStudentIds.has(sighting.studentId)
+          ) {
+            continue;
+          }
+          const elapsedSeconds =
+            (new Date(sighting.observedAt).getTime() -
+              new Date(context.scheduledStart).getTime()) /
+            1000;
+          const bucket =
+            Math.floor(elapsedSeconds / defaultVerificationConfig.sightingIntervalSeconds) *
+            defaultVerificationConfig.sightingIntervalSeconds;
+          const bucketTime = new Date(
+            new Date(context.scheduledStart).getTime() + bucket * 1000,
+          ).toISOString();
+          const ids = snapshots.get(bucketTime) ?? new Set<string>();
+          ids.add(sighting.studentId);
+          snapshots.set(bucketTime, ids);
+        }
+        for (const [observedAt, ids] of snapshots) {
+          const occupancy = calculateOccupancy(enrolledStudents.length, ids);
+          await repository.storeOccupancySnapshot(
+            session.id,
+            observedAt,
+            occupancy.expectedCount,
+            occupancy.observedCount,
+          );
+        }
+      }
+
       const observations = await storeAIObservations(
         repository,
         session.id,
         inference.results.map((result) => {
           const studentId =
+            result.status === 'unknown' ? null : globalIdentityMap.get(result.identity) ?? null;
+          const expectedStudentIds = new Set(enrolledStudents.map((student) => student.id));
+          const verificationResult =
             result.status === 'unknown'
-              ? null
-              : isKnownIdentity(result.identity, enrolledStudentIds, mapping);
+              ? 'UNKNOWN'
+              : studentId === null
+                ? 'UNKNOWN'
+                : expectedStudentIds.has(studentId)
+                  ? 'FACULTY_REVIEW_REQUIRED'
+                  : 'UNEXPECTED_STUDENT';
           return {
             id: crypto.randomUUID(),
             studentId,
@@ -244,6 +305,7 @@ export function createAttendanceRouter({
               sampled_frames: inference.sampled_frames,
               errors: inference.errors,
               warnings: inference.warnings,
+              verification_result: verificationResult,
             },
             modelName: inference.model_name,
             modelVersion: inference.model_version,
@@ -251,19 +313,33 @@ export function createAttendanceRouter({
         }),
       );
 
-      for (const observation of observations) {
-        if (
-          observation.studentId &&
-          observation.status !== 'unknown'
-        ) {
+      for (const student of enrolledStudents) {
+        const verification = verifyStudent(
+          student.id,
+          sightings.filter((sighting) => sighting.recognitionStatus === 'confirmed').map((sighting) => ({
+            ...sighting,
+            observedAt: new Date(sighting.observedAt),
+          })),
+          new Date(context.scheduledStart),
+          new Date(context.scheduledEnd),
+        );
+        const evidenceObservation = observations.find(
+          (observation) => observation.studentId === student.id,
+        );
+        if (evidenceObservation || verification.totalSightings > 0) {
           await upsertProvisionalAttendance(repository, {
             id: crypto.randomUUID(),
             attendanceSessionId: session.id,
-            studentId: observation.studentId,
-            status: resultStatus(observation.status),
+            studentId: student.id,
+            status: verification.proposedStatus,
             source: 'ai',
-            confidence: observation.similarity,
-            evidenceObservationId: observation.id,
+            confidence: evidenceObservation?.similarity ?? null,
+            evidenceObservationId: evidenceObservation?.id ?? null,
+            verificationResult: verification.result,
+            firstSeen: verification.firstSeen?.toISOString() ?? null,
+            lastSeen: verification.lastSeen?.toISOString() ?? null,
+            totalSightings: verification.totalSightings,
+            lateEntry: verification.lateEntry,
           });
         }
       }
@@ -354,7 +430,7 @@ export function createAttendanceRouter({
       response.status(400).json({
         error: {
           code: 'INVALID_REQUEST',
-          message: 'record_id and finalized_by are required',
+          message: 'record_id is required',
         },
       });
       return;
@@ -375,7 +451,7 @@ export function createAttendanceRouter({
       const record = await finalizeAttendance(repository, {
         recordId: request.body.record_id,
         attendanceSessionId: session.id,
-        finalizedBy: request.body.finalized_by,
+        finalizedBy: request.body.finalized_by ?? null,
         status: request.body.status,
       });
       response.json({ record });

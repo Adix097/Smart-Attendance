@@ -44,6 +44,25 @@ class RecognitionResult(BaseModel):
     identity_margin: float | None
 
 
+class BoundingBox(BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class RecognitionSighting(BaseModel):
+    timestamp_seconds: float
+    tracker_id: str
+    identity: str | None
+    status: RecognitionStatus
+    best_similarity: float | None
+    second_best_similarity: float | None
+    identity_margin: float | None
+    camera_id: str | None = None
+    bbox: BoundingBox | None = None
+
+
 class InferenceResponse(BaseModel):
     schema_version: str
     model_name: str
@@ -54,5 +73,18 @@ class InferenceResponse(BaseModel):
     detected_faces: int
     sampled_frames: int
     results: list[RecognitionResult]
+    sightings: list[RecognitionSighting]
     errors: list[str]
+    warnings: list[str]
+
+
+class RecognitionTestRequest(BaseModel):
+    image_path: str = Field(min_length=1)
+    enrollment_dir: str = Field(min_length=1)
+
+
+class RecognitionTestResponse(BaseModel):
+    model_name: str
+    model_version: str | None
+    sighting: RecognitionSighting | None
     warnings: list[str]

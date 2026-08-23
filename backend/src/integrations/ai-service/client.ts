@@ -3,6 +3,7 @@ import type {
   AIInferenceRequest,
   AIInferenceResponse,
   AIRecognitionResult,
+  AIRecognitionSighting,
   AISamplingConfiguration,
   AIVideoMetadata,
   RecognitionStatus,
@@ -76,6 +77,34 @@ const isRecognitionResult = (
   );
 };
 
+const isRecognitionSighting = (
+  value: unknown,
+): value is AIRecognitionSighting => {
+  if (!isRecord(value)) return false;
+  const bbox = value.bbox;
+  const validBbox =
+    bbox === null ||
+    bbox === undefined ||
+    (isRecord(bbox) &&
+      typeof bbox.x === 'number' &&
+      typeof bbox.y === 'number' &&
+      typeof bbox.width === 'number' &&
+      typeof bbox.height === 'number');
+  return (
+    typeof value.timestamp_seconds === 'number' &&
+    typeof value.tracker_id === 'string' &&
+    (value.identity === null || typeof value.identity === 'string') &&
+    isRecognitionStatus(value.status) &&
+    isNumberOrNull(value.best_similarity) &&
+    isNumberOrNull(value.second_best_similarity) &&
+    isNumberOrNull(value.identity_margin) &&
+    (value.camera_id === null ||
+      value.camera_id === undefined ||
+      typeof value.camera_id === 'string') &&
+    validBbox
+  );
+};
+
 const isAIInferenceResponse = (
   value: unknown,
 ): value is AIInferenceResponse => {
@@ -93,6 +122,9 @@ const isAIInferenceResponse = (
     typeof value.sampled_frames === 'number' &&
     Array.isArray(value.results) &&
     value.results.every(isRecognitionResult) &&
+    (value.sightings === undefined ||
+      (Array.isArray(value.sightings) &&
+        value.sightings.every(isRecognitionSighting))) &&
     Array.isArray(value.errors) &&
     value.errors.every((error) => typeof error === 'string') &&
     Array.isArray(value.warnings) &&

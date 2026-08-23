@@ -36,6 +36,23 @@ def _status(
     return "confirmed"
 
 
+def status_for_sighting(
+    best_similarity: float,
+    identity_margin: float | None,
+    config: InferenceConfig,
+) -> str:
+    if best_similarity < config.unknown_threshold:
+        return "unknown"
+    if best_similarity < config.acceptance_threshold:
+        return "uncertain"
+    if (
+        identity_margin is not None
+        and identity_margin < config.identity_margin_threshold
+    ):
+        return "uncertain"
+    return "confirmed"
+
+
 def aggregate_observations(
     observations: list[Observation], config: InferenceConfig
 ) -> list[RecognitionResult]:

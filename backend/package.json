@@ -10,7 +10,9 @@
     "type-check": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:seed": "tsx src/db/seed.ts"
+    "db:seed": "tsx src/db/seed.ts",
+    "db:import-data": "tsx src/db/import-data-cli.ts",
+    "recognition:harness": "tsx src/dev/recognition-harness.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.7",

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   createAttendanceSession,
   finalizeAttendance,
+  getAttendanceClasses,
   getAttendanceObservations,
   getAttendanceRecords,
   getAttendanceSessionStatus,
@@ -10,20 +11,10 @@ import {
   type AttendanceObservation,
   type AttendanceRecord,
   type AttendanceSession,
+  type ClassSessionOption,
   type RecordStatus,
   type SessionStatus,
 } from './api/attendance';
-
-const CLASS_SESSION_ID = '00000000-0000-0000-0000-000000000005';
-// Deterministic local demo mapping; production identity management is out of scope.
-const DEMO_IDENTITY_STUDENT_IDS = {
-  adi: '00000000-0000-0000-0000-000000000012',
-};
-const students: Record<string, string> = {
-  '00000000-0000-0000-0000-000000000012': 'Student A',
-  '00000000-0000-0000-0000-000000000014': 'Student B',
-  '00000000-0000-0000-0000-000000000016': 'Student C',
-};
 
 const statusLabels: Record<SessionStatus, string> = {
   pending: 'Pending',
@@ -32,15 +23,21 @@ const statusLabels: Record<SessionStatus, string> = {
   failed: 'Failed',
 };
 
-function studentName(id: string | null): string {
-  return id ? students[id] ?? id : 'Unknown face';
+function studentName(id: string | null, students: ClassSessionOption['students']): string {
+  return id ? students.find((student) => student.id === id)?.name ?? id : 'Unknown face';
 }
 
 function similarity(value: number | null): string {
   return value === null ? '—' : value.toFixed(3);
 }
 
-function ObservationCard({ observation }: { observation: AttendanceObservation }) {
+function ObservationCard({
+  observation,
+  students,
+}: {
+  observation: AttendanceObservation;
+  students: ClassSessionOption['students'];
+}) {
   const evidenceTone = {
     confirmed: 'border-emerald-500 bg-emerald-50',
     uncertain: 'border-amber-500 bg-amber-50',
@@ -50,12 +47,18 @@ function ObservationCard({ observation }: { observation: AttendanceObservation }
   return (
     <article className={`my-2 rounded-lg border-l-4 p-4 ${evidenceTone}`}>
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <strong>{studentName(observation.studentId)}</strong>
+        <strong>{studentName(observation.studentId, students)}</strong>
         <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-bold uppercase">
           {observation.status}
         </span>
       </div>
       <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-600">
+        <span>
+          Verification:{' '}
+          {typeof observation.evidence.verification_result === 'string'
+            ? observation.evidence.verification_result
+            : 'FACULTY_REVIEW_REQUIRED'}
+        </span>
         <span>Similarity: {similarity(observation.similarity)}</span>
         <span>Observations: {observation.observationCount}</span>
         <span>Margin: {similarity(observation.identityMargin)}</span>
@@ -93,14 +96,27 @@ function App() {
 }
 
 function AttendancePage() {
+  const [classes, setClasses] = useState<ClassSessionOption[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState('');
+  const selectedClass = classes.find((item) => item.id === selectedClassId) ?? null;
   const [session, setSession] = useState<AttendanceSession | null>(null);
   const [observations, setObservations] = useState<AttendanceObservation[]>([]);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [videoPath, setVideoPath] = useState('C:\\demo\\classroom.mp4');
-  const [enrollmentDir, setEnrollmentDir] = useState('C:\\demo\\enrollment');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [reviewStatus, setReviewStatus] = useState<Record<string, RecordStatus>>({});
+
+  useEffect(() => {
+    getAttendanceClasses()
+      .then(({ classes: availableClasses }) => {
+        setClasses(availableClasses);
+        setSelectedClassId(availableClasses[0]?.id ?? '');
+      })
+      .catch((cause) => {
+        setError(cause instanceof Error ? cause.message : 'Unable to load scheduled classes');
+      });
+  }, []);
 
   const grouped = useMemo(
     () => ({
@@ -142,8 +158,13 @@ function AttendancePage() {
   const createSession = async () => {
     setBusy(true);
     setError('');
+    if (!selectedClass) {
+      setError('Select a scheduled class before creating an attendance session.');
+      setBusy(false);
+      return;
+    }
     try {
-      setSession(await createAttendanceSession(CLASS_SESSION_ID));
+      setSession(await createAttendanceSession(selectedClass.id));
       setObservations([]);
       setRecords([]);
     } catch (cause) {
@@ -162,8 +183,6 @@ function AttendancePage() {
       const result = await processAttendanceSession(
         session.id,
         videoPath,
-        enrollmentDir,
-        DEMO_IDENTITY_STUDENT_IDS,
       );
       setSession(result.session);
       await loadEvidence(session.id);
@@ -210,10 +229,37 @@ function AttendancePage() {
 
       <section className="my-4 flex flex-col gap-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="mb-2 text-lg font-semibold">Current class</h2>
-          <p><strong>Course:</strong> SAR-DEMO-101 · Smart Automation Foundations</p>
-          <p><strong>Classroom:</strong> USAR Demo Classroom</p>
-          <p><strong>Scheduled:</strong> 24 Aug 2026, 09:00–10:00 UTC</p>
+          <h2 className="mb-2 text-lg font-semibold">Scheduled class</h2>
+          {classes.length === 0 ? (
+            <p className="text-slate-600">No concrete class sessions are available in PostgreSQL.</p>
+          ) : (
+            <select
+              className="mb-3 w-full rounded-lg border border-slate-300 px-3 py-2"
+              value={selectedClassId}
+              onChange={(event) => {
+                setSelectedClassId(event.target.value);
+                setSession(null);
+                setObservations([]);
+                setRecords([]);
+              }}
+              disabled={busy}
+            >
+              {classes.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.courseCode} — {item.courseTitle} · {new Date(item.scheduledStart).toLocaleString()}
+                </option>
+              ))}
+            </select>
+          )}
+          {selectedClass && (
+            <>
+              <p><strong>Course:</strong> {selectedClass.courseCode} · {selectedClass.courseTitle}</p>
+              <p><strong>Faculty:</strong> {selectedClass.facultyName}</p>
+              <p><strong>Classroom:</strong> {selectedClass.classroomName}</p>
+              <p><strong>Scheduled:</strong> {new Date(selectedClass.scheduledStart).toLocaleString()}–{new Date(selectedClass.scheduledEnd).toLocaleTimeString()}</p>
+              <p><strong>Enrolled students:</strong> {selectedClass.students.length}</p>
+            </>
+          )}
         </div>
         <div className="grid justify-items-start gap-2 sm:justify-items-end">
           <span className={`rounded-full px-3 py-1 text-xs font-bold ${
@@ -230,7 +276,7 @@ function AttendancePage() {
           <button
             className="rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={createSession}
-            disabled={busy}
+            disabled={busy || !selectedClass}
           >
             {session ? 'Use attendance session' : 'Create attendance session'}
           </button>
@@ -257,10 +303,9 @@ function AttendancePage() {
           Video path
           <input className="rounded-lg border border-slate-300 px-3 py-2 font-normal focus:border-blue-600 focus:outline-none" value={videoPath} onChange={(event) => setVideoPath(event.target.value)} />
         </label>
-        <label className="mb-4 grid gap-1 text-sm font-semibold">
-          Enrollment directory
-          <input className="rounded-lg border border-slate-300 px-3 py-2 font-normal focus:border-blue-600 focus:outline-none" value={enrollmentDir} onChange={(event) => setEnrollmentDir(event.target.value)} />
-        </label>
+        <p className="mb-4 text-sm text-slate-600">
+        Enrollment images are resolved by Express from the imported student directories.
+        </p>
         <button
           className="rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
           onClick={processVideo}
@@ -286,7 +331,7 @@ function AttendancePage() {
                   <p className="italic text-slate-500">No observations in this category.</p>
                 ) : (
                   grouped[status].map((observation) => (
-                    <ObservationCard key={observation.id} observation={observation} />
+                  <ObservationCard key={observation.id} observation={observation} students={selectedClass?.students ?? []} />
                   ))
                 )}
               </div>
@@ -304,10 +349,18 @@ function AttendancePage() {
               records.map((record) => (
                 <div className="flex flex-col gap-3 border-t border-slate-200 py-3 sm:flex-row sm:items-center" key={record.id}>
                   <div className="flex-1">
-                    <strong>{studentName(record.studentId)}</strong>
+                    <strong>{studentName(record.studentId, selectedClass?.students ?? [])}</strong>
                     <span className="ml-2 text-sm text-slate-500">
                       {record.finalizedAt ? 'Finalized' : 'Provisional'} · AI evidence
                     </span>
+                    <div className="mt-1 text-sm text-slate-600">
+                      {record.verificationResult ?? 'FACULTY_REVIEW_REQUIRED'} · Sightings: {record.totalSightings}
+                      {record.lateEntry ? ' · Late entry' : ''}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      First seen: {record.firstSeen ? new Date(record.firstSeen).toLocaleTimeString() : 'Not available'} ·
+                      Last seen: {record.lastSeen ? new Date(record.lastSeen).toLocaleTimeString() : 'Not available'}
+                    </div>
                   </div>
                   <select
                     className="rounded-lg border border-slate-300 px-3 py-2"

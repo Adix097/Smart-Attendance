@@ -34,6 +34,25 @@ export interface AIRecognitionResult {
   identity_margin: number | null;
 }
 
+export interface AIBoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface AIRecognitionSighting {
+  timestamp_seconds: number;
+  tracker_id: string;
+  identity: string | null;
+  status: RecognitionStatus;
+  best_similarity: number | null;
+  second_best_similarity: number | null;
+  identity_margin: number | null;
+  camera_id?: string | null;
+  bbox?: AIBoundingBox | null;
+}
+
 export interface AIInferenceResponse {
   schema_version: string;
   model_name: string;
@@ -44,6 +63,7 @@ export interface AIInferenceResponse {
   detected_faces: number;
   sampled_frames: number;
   results: AIRecognitionResult[];
+  sightings?: AIRecognitionSighting[];
   errors: string[];
   warnings: string[];
 }

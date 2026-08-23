@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import path from 'node:path';
 
 const port = Number.parseInt(process.env.PORT ?? '3001', 10);
 const aiServiceTimeoutMs = Number.parseInt(
@@ -26,4 +27,5 @@ export const config = {
   databaseUser: process.env.DB_USER ?? 'postgres',
   databasePassword: process.env.DB_PASSWORD ?? '',
   databaseSsl: process.env.DB_SSL === 'true',
+  enrollmentRoot: process.env.ENROLLMENT_ROOT ?? path.resolve(process.cwd(), 'data', 'enrollment'),
 };

@@ -5,8 +5,15 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from app.config import InferenceConfig, settings
+from app.diagnostics import run_recognition_test
 from app.pipelines.recognition import build_analysis, run_video_inference
-from app.schemas import InferenceRequest, InferenceResponse, SamplingConfiguration
+from app.schemas import (
+    InferenceRequest,
+    InferenceResponse,
+    RecognitionTestRequest,
+    RecognitionTestResponse,
+    SamplingConfiguration,
+)
 
 
 app = FastAPI(title="Smart Attendance AI Service", version="0.1.0")
@@ -54,11 +61,34 @@ def inference(request: InferenceRequest) -> InferenceResponse:
             detected_faces=0,
             sampled_frames=0,
             results=[],
+            sightings=[],
             errors=[str(error)],
             warnings=[
                 "Inference did not complete; no attendance was finalized.",
             ],
         )
+
+
+@app.post(
+    "/v1/dev/recognition-test",
+    response_model=RecognitionTestResponse,
+)
+def recognition_test(request: RecognitionTestRequest) -> RecognitionTestResponse:
+    if os.getenv("AI_ENABLE_DEV_HARNESS", "").lower() != "true":
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="Development harness is disabled")
+    try:
+        return run_recognition_test(
+            image_path=Path(request.image_path),
+            enrollment_dir=Path(request.enrollment_dir),
+            config=settings,
+            analysis=_analysis_for(settings),
+        )
+    except (OSError, RuntimeError, ValueError) as error:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 def server_config() -> tuple[str, int]:

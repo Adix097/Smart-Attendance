@@ -14,7 +14,11 @@ import type {
   AttendanceRecord,
   AttendanceRepository,
   AttendanceSession,
+  AttendanceContext,
+  AttendanceSightingInput,
+  ClassSessionOption,
   CreateAttendanceSessionInput,
+  EnrolledStudent,
   FinalizeAttendanceInput,
   ProvisionalAttendanceInput,
 } from '../src/modules/attendance/types.js';
@@ -24,6 +28,20 @@ class MockAttendanceRepository implements AttendanceRepository {
   readonly observations: AttendanceObservation[] = [];
   readonly records: AttendanceRecord[] = [];
 
+  classSessionExists(): Promise<boolean> { return Promise.resolve(true); }
+  getEnrolledStudentIds(): Promise<string[]> { return Promise.resolve([]); }
+  ensureUpcomingClassSession(): Promise<void> { return Promise.resolve(); }
+  getClassSessionOptions(): Promise<ClassSessionOption[]> { return Promise.resolve([]); }
+  getEnrolledStudents(): Promise<EnrolledStudent[]> { return Promise.resolve([]); }
+  createAttendanceContext(): Promise<void> { return Promise.resolve(); }
+  getExpectedStudents(): Promise<EnrolledStudent[]> { return Promise.resolve([]); }
+  getStudentIdentityMap(): Promise<Map<string, string>> { return Promise.resolve(new Map()); }
+  getAttendanceContext(): Promise<AttendanceContext | null> { return Promise.resolve(null); }
+  storeAttendanceSightings(_id: string, _sightings: AttendanceSightingInput[]): Promise<void> {
+    return Promise.resolve();
+  }
+  storeOccupancySnapshot(): Promise<void> { return Promise.resolve(); }
+
   async createAttendanceSession(
     input: CreateAttendanceSessionInput,
   ): Promise<AttendanceSession> {
@@ -31,6 +49,7 @@ class MockAttendanceRepository implements AttendanceRepository {
       id: input.id,
       classSessionId: input.classSessionId,
       status: input.status ?? 'open',
+      processingError: null,
     };
     this.sessions.push(session);
     return session;
@@ -51,10 +70,19 @@ class MockAttendanceRepository implements AttendanceRepository {
   async upsertProvisionalAttendance(
     input: ProvisionalAttendanceInput,
   ): Promise<AttendanceRecord> {
+    const existing = this.records.find((record) => record.id === input.id);
+    if (existing?.finalizedAt) {
+      throw new Error('Attendance record is already finalized');
+    }
     const record = {
       ...input,
       finalizedBy: null,
       finalizedAt: null,
+      verificationResult: input.verificationResult ?? null,
+      firstSeen: input.firstSeen ?? null,
+      lastSeen: input.lastSeen ?? null,
+      totalSightings: input.totalSightings ?? 0,
+      lateEntry: input.lateEntry ?? false,
     };
     this.records.push(record);
     return record;
@@ -129,5 +157,9 @@ describe('attendance persistence service', () => {
     assert.equal(finalized.finalizedBy, 'faculty-1');
     assert.equal(records.length, 1);
     assert.equal(records[0].status, 'present');
+    await assert.rejects(
+      upsertProvisionalAttendance(repository, { ...input, status: 'absent' }),
+      /already finalized/,
+    );
   });
 });

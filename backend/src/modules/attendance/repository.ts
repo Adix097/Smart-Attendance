@@ -5,11 +5,16 @@ import type {
   AttendanceRecord,
   AttendanceRepository,
   AttendanceSession,
+  AttendanceContext,
+  AttendanceSightingInput,
+  ClassSessionOption,
   CreateAttendanceSessionInput,
+  EnrolledStudent,
   FinalizeAttendanceInput,
   AIObservationInput,
   ProvisionalAttendanceInput,
 } from './types.js';
+import { defaultVerificationConfig } from './verification.js';
 
 function sessionFromRow(row: {
   id: string;
@@ -54,6 +59,11 @@ function recordFromRow(row: Record<string, unknown>): AttendanceRecord {
     finalizedAt: row.finalized_at
       ? (row.finalized_at as Date).toISOString()
       : null,
+    verificationResult: (row.verification_result as string | null) ?? null,
+    firstSeen: row.first_seen ? (row.first_seen as Date).toISOString() : null,
+    lastSeen: row.last_seen ? (row.last_seen as Date).toISOString() : null,
+    totalSightings: Number(row.total_sightings ?? 0),
+    lateEntry: Boolean(row.late_entry),
   };
 }
 
@@ -78,6 +88,279 @@ export class PgAttendanceRepository implements AttendanceRepository {
       [classSessionId],
     );
     return result.rows.map((row) => row.student_id as string);
+  }
+
+  async getEnrolledStudents(classSessionId: string): Promise<EnrolledStudent[]> {
+    const result = await this.database.query(
+      `SELECT DISTINCT s.id, s.student_number, s.name, s.batch, s.student_group
+       FROM class_sessions cs
+       JOIN timetable_entries te ON te.id = cs.timetable_entry_id
+       JOIN students s ON (
+         te.batch = 'ALL'
+         OR s.student_group = te.batch
+         OR EXISTS (
+           SELECT 1 FROM enrollments e
+           WHERE e.course_id = cs.course_id AND e.student_id = s.id
+         )
+       )
+       WHERE cs.id = $1
+       ORDER BY s.name, s.student_number`,
+      [classSessionId],
+    );
+    return result.rows.map((row) => ({
+      id: row.id as string,
+      studentNumber: row.student_number as string,
+      name: row.name as string,
+      batch: row.batch as string | null,
+      group: row.student_group as string | null,
+    }));
+  }
+
+  async createAttendanceContext(
+    attendanceSessionId: string,
+    classSessionId: string,
+  ): Promise<void> {
+    const classSession = await this.database.query(
+      `SELECT scheduled_start, scheduled_end
+       FROM class_sessions WHERE id = $1`,
+      [classSessionId],
+    );
+    if (!classSession.rows[0]) throw new Error(`Class session not found: ${classSessionId}`);
+    await this.database.query(
+      `INSERT INTO attendance_contexts (
+         id, attendance_session_id, class_session_id,
+         scheduled_start, scheduled_end, entry_deadline
+       )
+       VALUES ($1, $2, $3, $4, $5, $4 + ($6 * interval '1 minute'))
+       ON CONFLICT (attendance_session_id) DO NOTHING`,
+      [
+        crypto.randomUUID(),
+        attendanceSessionId,
+        classSessionId,
+        classSession.rows[0].scheduled_start,
+        classSession.rows[0].scheduled_end,
+        defaultVerificationConfig.lateEntryMinutes,
+      ],
+    );
+    const students = await this.getEnrolledStudents(classSessionId);
+    const context = await this.database.query(
+      'SELECT id FROM attendance_contexts WHERE attendance_session_id = $1',
+      [attendanceSessionId],
+    );
+    for (const student of students) {
+      await this.database.query(
+        `INSERT INTO attendance_context_students (
+           attendance_context_id, student_id, student_number, student_name,
+           batch, student_group
+         )
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (attendance_context_id, student_id) DO NOTHING`,
+        [
+          context.rows[0].id,
+          student.id,
+          student.studentNumber,
+          student.name,
+          student.batch,
+          student.group,
+        ],
+      );
+    }
+  }
+
+  async getExpectedStudents(attendanceSessionId: string): Promise<EnrolledStudent[]> {
+    const result = await this.database.query(
+      `SELECT student_id AS id, student_number, student_name AS name,
+              batch, student_group
+       FROM attendance_context_students acs
+       JOIN attendance_contexts ac ON ac.id = acs.attendance_context_id
+       WHERE ac.attendance_session_id = $1
+       ORDER BY student_name, student_number`,
+      [attendanceSessionId],
+    );
+    return result.rows.map((row) => ({
+      id: row.id as string,
+      studentNumber: row.student_number as string,
+      name: row.name as string,
+      batch: row.batch as string | null,
+      group: row.student_group as string | null,
+    }));
+  }
+
+  async getStudentIdentityMap(): Promise<Map<string, string>> {
+    const result = await this.database.query(
+      'SELECT id, student_number FROM students WHERE student_number IS NOT NULL',
+    );
+    return new Map(
+      result.rows.map((row) => [row.student_number as string, row.id as string]),
+    );
+  }
+
+  async getAttendanceContext(
+    attendanceSessionId: string,
+  ): Promise<AttendanceContext | null> {
+    const result = await this.database.query(
+      `SELECT scheduled_start, scheduled_end, entry_deadline
+       FROM attendance_contexts WHERE attendance_session_id = $1`,
+      [attendanceSessionId],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          scheduledStart: (row.scheduled_start as Date).toISOString(),
+          scheduledEnd: (row.scheduled_end as Date).toISOString(),
+          entryDeadline: (row.entry_deadline as Date).toISOString(),
+        }
+      : null;
+  }
+
+  async storeAttendanceSightings(
+    attendanceSessionId: string,
+    sightings: AttendanceSightingInput[],
+  ): Promise<void> {
+    for (const sighting of sightings) {
+      await this.database.query(
+        `INSERT INTO attendance_sightings (
+           id, attendance_session_id, student_id, tracker_id,
+           observed_at, camera_id, similarity, x, y
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (attendance_session_id, tracker_id, observed_at) DO NOTHING`,
+        [
+          sighting.id,
+          attendanceSessionId,
+          sighting.studentId,
+          sighting.trackerId,
+          sighting.observedAt,
+          sighting.cameraId,
+          sighting.similarity,
+          sighting.x,
+          sighting.y,
+        ],
+      );
+    }
+  }
+
+  async storeOccupancySnapshot(
+    attendanceSessionId: string,
+    observedAt: string,
+    expectedCount: number,
+    observedCount: number,
+  ): Promise<void> {
+    await this.database.query(
+      `INSERT INTO occupancy_snapshots (
+         id, attendance_session_id, observed_at,
+         expected_count, observed_count, occupancy_ratio
+       )
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (attendance_session_id, observed_at) DO NOTHING`,
+      [
+        crypto.randomUUID(),
+        attendanceSessionId,
+        observedAt,
+        expectedCount,
+        observedCount,
+        expectedCount === 0 ? 0 : Math.min(1, observedCount / expectedCount),
+      ],
+    );
+  }
+
+  async ensureUpcomingClassSession(): Promise<void> {
+    const result = await this.database.query(
+      `SELECT te.id, te.course_id, te.faculty_id, te.room,
+              te.day_of_week, te.start_time, te.end_time
+       FROM timetable_entries te
+       ORDER BY te.id`,
+    );
+    if (result.rows.length === 0) return;
+
+    const dayIndexes: Record<string, number> = {
+      Sunday: 0,
+      Monday: 1,
+      Tuesday: 2,
+      Wednesday: 3,
+      Thursday: 4,
+      Friday: 5,
+      Saturday: 6,
+    };
+    const now = new Date();
+    let selected:
+      | { row: Record<string, unknown>; start: Date; end: Date }
+      | undefined;
+
+    for (const row of result.rows) {
+      const targetDay = dayIndexes[row.day_of_week as string];
+      const [hours, minutes] = String(row.start_time).split(':').map(Number);
+      const [endHours, endMinutes] = String(row.end_time).split(':').map(Number);
+      const daysAhead = (targetDay - now.getUTCDay() + 7) % 7;
+      const start = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() + (daysAhead === 0 && (hours * 60 + minutes) <=
+          (now.getUTCHours() * 60 + now.getUTCMinutes()) ? 7 : daysAhead),
+        hours,
+        minutes,
+      ));
+      const end = new Date(start);
+      end.setUTCHours(endHours, endMinutes, 0, 0);
+      if (!selected || start < selected.start) selected = { row, start, end };
+    }
+    if (!selected) return;
+
+    await this.database.query(
+      `INSERT INTO class_sessions (
+         id, timetable_entry_id, course_id, faculty_id, classroom_id,
+         scheduled_start, scheduled_end
+       )
+       VALUES ($1, $2, $3, $4, NULL, $5, $6)
+       ON CONFLICT (timetable_entry_id, scheduled_start)
+       WHERE timetable_entry_id IS NOT NULL DO NOTHING`,
+      [
+        crypto.randomUUID(),
+        selected.row.id,
+        selected.row.course_id,
+        selected.row.faculty_id,
+        selected.start.toISOString(),
+        selected.end.toISOString(),
+      ],
+    );
+  }
+
+  async getClassSessionOptions(): Promise<ClassSessionOption[]> {
+    const result = await this.database.query(
+      `SELECT cs.id, c.code, c.title, f.name AS faculty_name,
+              COALESCE(cl.name, te.room) AS classroom_name,
+              cs.scheduled_start, cs.scheduled_end
+       FROM class_sessions cs
+       JOIN courses c ON c.id = cs.course_id
+       JOIN faculty f ON f.id = cs.faculty_id
+       JOIN timetable_entries te ON te.id = cs.timetable_entry_id
+       LEFT JOIN classrooms cl ON cl.id = cs.classroom_id
+       WHERE EXISTS (
+         SELECT 1
+         FROM students s
+         WHERE te.batch = 'ALL'
+            OR s.student_group = te.batch
+            OR EXISTS (
+              SELECT 1 FROM enrollments e
+              WHERE e.course_id = cs.course_id AND e.student_id = s.id
+            )
+       )
+       ORDER BY cs.scheduled_start, c.code`,
+    );
+    const options: ClassSessionOption[] = [];
+    for (const row of result.rows) {
+      options.push({
+        id: row.id as string,
+        courseCode: row.code as string,
+        courseTitle: row.title as string,
+        facultyName: row.faculty_name as string,
+        classroomName: row.classroom_name as string,
+        scheduledStart: (row.scheduled_start as Date).toISOString(),
+        scheduledEnd: (row.scheduled_end as Date).toISOString(),
+        students: await this.getEnrolledStudents(row.id as string),
+      });
+    }
+    return options;
   }
 
   async createAttendanceSession(
@@ -162,14 +445,21 @@ export class PgAttendanceRepository implements AttendanceRepository {
       `INSERT INTO attendance_records (
          id, attendance_session_id, student_id, status, source,
          confidence, evidence_observation_id
+         , verification_result, first_seen, last_seen, total_sightings, late_entry
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (attendance_session_id, student_id)
        DO UPDATE SET
          status = EXCLUDED.status,
          source = EXCLUDED.source,
          confidence = EXCLUDED.confidence,
-         evidence_observation_id = EXCLUDED.evidence_observation_id
+         evidence_observation_id = EXCLUDED.evidence_observation_id,
+         verification_result = EXCLUDED.verification_result,
+         first_seen = EXCLUDED.first_seen,
+         last_seen = EXCLUDED.last_seen,
+         total_sightings = EXCLUDED.total_sightings,
+         late_entry = EXCLUDED.late_entry
+       WHERE attendance_records.finalized_at IS NULL
        RETURNING *`,
       [
         input.id,
@@ -179,8 +469,16 @@ export class PgAttendanceRepository implements AttendanceRepository {
         input.source,
         input.confidence,
         input.evidenceObservationId,
+        input.verificationResult ?? null,
+        input.firstSeen ?? null,
+        input.lastSeen ?? null,
+        input.totalSightings ?? 0,
+        input.lateEntry ?? false,
       ],
     );
+    if (!result.rows[0]) {
+      throw new Error(`Attendance record is already finalized: ${input.id}`);
+    }
     return recordFromRow(result.rows[0]);
   }
 
