@@ -15,11 +15,13 @@ function sessionFromRow(row: {
   id: string;
   class_session_id: string;
   status: string;
+  processing_error?: string | null;
 }): AttendanceSession {
   return {
     id: row.id,
     classSessionId: row.class_session_id,
-    status: row.status,
+    status: row.status as AttendanceSession['status'],
+    processingError: row.processing_error ?? null,
   };
 }
 
@@ -58,15 +60,65 @@ function recordFromRow(row: Record<string, unknown>): AttendanceRecord {
 export class PgAttendanceRepository implements AttendanceRepository {
   constructor(private readonly database: Pool) {}
 
+  async classSessionExists(classSessionId: string): Promise<boolean> {
+    const result = await this.database.query(
+      'SELECT 1 FROM class_sessions WHERE id = $1',
+      [classSessionId],
+    );
+    return Boolean(result.rowCount);
+  }
+
+  async getEnrolledStudentIds(classSessionId: string): Promise<string[]> {
+    const result = await this.database.query(
+      `SELECT e.student_id
+       FROM enrollments e
+       JOIN class_sessions cs ON cs.course_id = e.course_id
+       WHERE cs.id = $1
+       ORDER BY e.student_id`,
+      [classSessionId],
+    );
+    return result.rows.map((row) => row.student_id as string);
+  }
+
   async createAttendanceSession(
     input: CreateAttendanceSessionInput,
   ): Promise<AttendanceSession> {
     const result = await this.database.query(
       `INSERT INTO attendance_sessions (id, class_session_id, status)
        VALUES ($1, $2, $3)
-       RETURNING id, class_session_id, status`,
+       ON CONFLICT (class_session_id)
+       DO UPDATE SET class_session_id = EXCLUDED.class_session_id
+       RETURNING id, class_session_id, status, processing_error`,
       [input.id, input.classSessionId, input.status ?? 'open'],
     );
+    return sessionFromRow(result.rows[0]);
+  }
+
+  async getAttendanceSession(id: string): Promise<AttendanceSession | null> {
+    const result = await this.database.query(
+      `SELECT id, class_session_id, status, processing_error
+       FROM attendance_sessions
+       WHERE id = $1`,
+      [id],
+    );
+    return result.rows[0] ? sessionFromRow(result.rows[0]) : null;
+  }
+
+  async updateAttendanceSessionStatus(
+    id: string,
+    status: AttendanceSession['status'],
+    processingError: string | null = null,
+  ): Promise<AttendanceSession> {
+    const result = await this.database.query(
+      `UPDATE attendance_sessions
+       SET status = $2, processing_error = $3
+       WHERE id = $1
+       RETURNING id, class_session_id, status, processing_error`,
+      [id, status, processingError],
+    );
+    if (!result.rows[0]) {
+      throw new Error(`Attendance session not found: ${id}`);
+    }
     return sessionFromRow(result.rows[0]);
   }
 
@@ -140,10 +192,10 @@ export class PgAttendanceRepository implements AttendanceRepository {
       await client.query('BEGIN');
       const result = await client.query(
         `UPDATE attendance_records
-         SET finalized_by = $2, finalized_at = now()
-         WHERE id = $1
+         SET status = COALESCE($2, status), finalized_by = $3, finalized_at = now()
+         WHERE id = $1 AND attendance_session_id = $4
          RETURNING *`,
-        [input.recordId, input.finalizedBy],
+        [input.recordId, input.status ?? null, input.finalizedBy, input.attendanceSessionId],
       );
       if (!result.rowCount) {
         throw new Error(`Attendance record not found: ${input.recordId}`);
@@ -181,5 +233,18 @@ export class PgAttendanceRepository implements AttendanceRepository {
       [attendanceSessionId],
     );
     return result.rows.map(recordFromRow);
+  }
+
+  async getAttendanceObservations(
+    attendanceSessionId: string,
+  ): Promise<AttendanceObservation[]> {
+    const result = await this.database.query(
+      `SELECT *
+       FROM attendance_observations
+       WHERE attendance_session_id = $1
+       ORDER BY created_at, id`,
+      [attendanceSessionId],
+    );
+    return result.rows.map(observationFromRow);
   }
 }

@@ -1,15 +1,24 @@
 import express from 'express';
 
+import { pool } from './db/pool.js';
 import {
   AIServiceError,
   requestAIInference,
   type AIInferenceRequest,
   type AIInferenceResponse,
 } from './integrations/ai-service/index.js';
+import { createAttendanceRouter } from './modules/attendance/routes.js';
+import { PgAttendanceRepository } from './modules/attendance/repository.js';
+import type { AttendanceRepository } from './modules/attendance/types.js';
 
 type AIInferenceHandler = (
   request: AIInferenceRequest,
 ) => Promise<AIInferenceResponse>;
+
+interface AppDependencies {
+  attendanceRepository?: AttendanceRepository;
+  attendanceInferenceHandler?: AIInferenceHandler;
+}
 
 const isInferenceRequest = (value: unknown): value is AIInferenceRequest => {
   if (typeof value !== 'object' || value === null) {
@@ -27,8 +36,13 @@ const isInferenceRequest = (value: unknown): value is AIInferenceRequest => {
 
 export function createApp(
   inferenceHandler: AIInferenceHandler = requestAIInference,
+  dependencies: AppDependencies = {},
 ) {
   const app = express();
+  const attendanceRepository =
+    dependencies.attendanceRepository ?? new PgAttendanceRepository(pool);
+  const attendanceInferenceHandler =
+    dependencies.attendanceInferenceHandler ?? inferenceHandler;
 
   app.use(express.json());
 
@@ -76,6 +90,14 @@ export function createApp(
       });
     }
   });
+
+  app.use(
+    '/api',
+    createAttendanceRouter({
+      repository: attendanceRepository,
+      inferenceHandler: attendanceInferenceHandler,
+    }),
+  );
 
   return app;
 }

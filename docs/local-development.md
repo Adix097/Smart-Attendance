@@ -1,6 +1,8 @@
 # Local development
 
-This repository currently contains runnable foundations only. There is no database, authentication, business feature, computer vision pipeline, or production deployment configuration yet.
+This repository contains runnable frontend, backend, AI-service, and PostgreSQL
+attendance vertical slices. Authentication, production deployment, and advanced
+computer-vision features remain out of scope for this MVP slice.
 
 ## Prerequisites
 
@@ -14,6 +16,10 @@ cd frontend
 npm install
 npm run dev
 ```
+
+Open `http://127.0.0.1:5173/attendance` for the faculty attendance workflow.
+During Vite development, `/api` requests are proxied to Express at
+`http://127.0.0.1:3001`.
 
 For a production build:
 
@@ -87,6 +93,47 @@ The attendance repository/service stores AI observations and provisional
 attendance evidence, finalizes records, writes finalization audit events, and
 retrieves records. Express remains the source of truth for final attendance;
 attendance policy calculations are not database triggers.
+
+## Attendance-session inference flow
+
+With PostgreSQL migrated and seeded, start FastAPI and Express in separate
+terminals. Create a session for the seeded class session, then process a local
+video and enrollment gallery through Express:
+
+```powershell
+$session = Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:3001/api/attendance-sessions `
+  -ContentType 'application/json' `
+  -Body '{"class_session_id":"00000000-0000-0000-0000-000000000005"}'
+
+Invoke-RestMethod -Method Post `
+  -Uri "http://127.0.0.1:3001/api/attendance-sessions/$($session.id)/process" `
+  -ContentType 'application/json' `
+  -Body (@{
+    video_path = 'C:\path\to\consented-classroom-video.mp4'
+    enrollment_dir = 'C:\path\to\consented-enrollment'
+    identity_student_ids = @{
+      'student-a-folder' = '00000000-0000-0000-0000-000000000012'
+    }
+  } | ConvertTo-Json)
+```
+
+Inspect processing state and provisional evidence with:
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:3001/api/attendance-sessions/$($session.id)/status"
+Invoke-RestMethod "http://127.0.0.1:3001/api/attendance-sessions/$($session.id)/observations"
+Invoke-RestMethod "http://127.0.0.1:3001/api/attendance-sessions/$($session.id)/records"
+```
+
+The video and enrollment paths must reference real, consented local files; no
+fixtures or biometric data are included in the repository. Processing stores
+provisional AI evidence only and never finalizes attendance.
+
+For the deterministic local demo, the faculty page maps the AI enrollment
+identity `adi` to seeded Student A
+(`00000000-0000-0000-0000-000000000012`). This is only a local demo mapping,
+not a production identity-management mechanism.
 
 ## Backend-AI integration test
 

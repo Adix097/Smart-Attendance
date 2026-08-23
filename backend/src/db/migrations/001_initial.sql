@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS attendance_sessions (
     status IN ('open', 'processing', 'ready_for_review', 'finalized')
   ),
   started_at timestamptz NOT NULL DEFAULT now(),
-  finalized_at timestamptz
+  finalized_at timestamptz,
+  processing_error text
 );
 
 CREATE TABLE IF NOT EXISTS attendance_observations (

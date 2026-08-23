@@ -9,6 +9,26 @@ import type {
   ProvisionalAttendanceInput,
 } from './types.js';
 
+export function updateAttendanceSessionStatus(
+  repository: AttendanceRepository,
+  attendanceSessionId: string,
+  status: AttendanceSession['status'],
+  processingError?: string | null,
+): Promise<AttendanceSession> {
+  return repository.updateAttendanceSessionStatus(
+    attendanceSessionId,
+    status,
+    processingError,
+  );
+}
+
+export function getAttendanceObservations(
+  repository: AttendanceRepository,
+  attendanceSessionId: string,
+): Promise<AttendanceObservation[]> {
+  return repository.getAttendanceObservations(attendanceSessionId);
+}
+
 export function createAttendanceSession(
   repository: AttendanceRepository,
   input: CreateAttendanceSessionInput,

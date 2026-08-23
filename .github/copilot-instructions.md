@@ -31,6 +31,9 @@ Keep implementation in the directory matching its responsibility. Do not duplica
 ## Technology decisions
 
 - Frontend: React + TypeScript.
+- Frontend styling: Tailwind CSS is the default; prefer utility classes in
+  React components. Keep manual CSS only for requirements Tailwind cannot
+  reasonably express.
 - Backend: Node.js + Express + TypeScript.
 - Database: PostgreSQL.
 - AI service: Python + FastAPI.

@@ -5,6 +5,12 @@ export type AttendanceRecordStatus =
   | 'uncertain'
   | 'unknown';
 export type AttendanceSource = 'ai' | 'faculty' | 'manual';
+export type AttendanceSessionDatabaseStatus =
+  | 'open'
+  | 'processing'
+  | 'ready_for_review'
+  | 'finalized'
+  | 'failed';
 
 export interface CreateAttendanceSessionInput {
   id: string;
@@ -15,7 +21,8 @@ export interface CreateAttendanceSessionInput {
 export interface AttendanceSession {
   id: string;
   classSessionId: string;
-  status: string;
+  status: AttendanceSessionDatabaseStatus;
+  processingError: string | null;
 }
 
 export interface AIObservationInput {
@@ -52,12 +59,22 @@ export interface AttendanceRecord extends ProvisionalAttendanceInput {
 
 export interface FinalizeAttendanceInput {
   recordId: string;
+  attendanceSessionId: string;
   finalizedBy: string;
+  status?: AttendanceRecordStatus;
 }
 
 export interface AttendanceRepository {
+  classSessionExists(classSessionId: string): Promise<boolean>;
+  getEnrolledStudentIds(classSessionId: string): Promise<string[]>;
   createAttendanceSession(
     input: CreateAttendanceSessionInput,
+  ): Promise<AttendanceSession>;
+  getAttendanceSession(id: string): Promise<AttendanceSession | null>;
+  updateAttendanceSessionStatus(
+    id: string,
+    status: AttendanceSessionDatabaseStatus,
+    processingError?: string | null,
   ): Promise<AttendanceSession>;
   storeAIObservations(
     attendanceSessionId: string,
@@ -68,4 +85,7 @@ export interface AttendanceRepository {
   ): Promise<AttendanceRecord>;
   finalizeAttendance(input: FinalizeAttendanceInput): Promise<AttendanceRecord>;
   getAttendanceRecords(attendanceSessionId: string): Promise<AttendanceRecord[]>;
+  getAttendanceObservations(
+    attendanceSessionId: string,
+  ): Promise<AttendanceObservation[]>;
 }

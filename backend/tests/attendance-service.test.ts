@@ -121,6 +121,7 @@ describe('attendance persistence service', () => {
     await upsertProvisionalAttendance(repository, input);
     const finalized = await finalizeAttendance(repository, {
       recordId: input.id,
+      attendanceSessionId: input.attendanceSessionId,
       finalizedBy: 'faculty-1',
     });
     const records = await getAttendanceRecords(repository, input.attendanceSessionId);
