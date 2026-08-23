@@ -1,0 +1,101 @@
+# Environment / Secrets
+
+.env
+.env.*
+!.env.example
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output
+dist/
+build/
+.next/
+.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# AI / Computer Vision
+# Model weights
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.bin
+*.safetensors
+
+# Downloaded AI models
+ai-service/models/
+ai-service/weights/
+ai-service/checkpoints/
+
+# Face datasets / biometric data
+ai-service/data/
+ai-service/datasets/
+ai-service/face-datasets/
+ai-service/embeddings/
+
+# Video / CCTV Data
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.ts
+
+# CCTV / classroom recordings
+data/videos/
+data/recordings/
+data/cctv/
+
+# AI Generated Outputs
+ai-service/outputs/
+ai-service/runs/
+ai-service/inference/
+ai-service/results/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local databases / dumps
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+
+# Local Copilot configuration
+.github/copilot-instructions.md
+.github/prompts/
+.github/skills/
