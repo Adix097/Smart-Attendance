@@ -35,6 +35,11 @@ npm run dev
 ```
 
 The health endpoint is available at `http://127.0.0.1:3001/api/health`.
+The backend integration endpoint is `POST http://127.0.0.1:3001/api/ai/inference`.
+It accepts the same JSON request contract as the AI service and forwards local
+video/enrollment paths to FastAPI. Configure `AI_SERVICE_URL` and
+`AI_SERVICE_TIMEOUT_MS` using `.env.example` values or process environment
+variables.
 
 For a production-style build and start:
 
@@ -45,7 +50,28 @@ npm run build
 npm start
 ```
 
-Copy `.env.example` to `.env` only when environment-file loading is added. The current server reads `PORT` and `HOST` from the process environment, with defaults of `3001` and `127.0.0.1`.
+The current server reads `PORT`, `HOST`, `AI_SERVICE_URL`, and
+`AI_SERVICE_TIMEOUT_MS` from the process environment. It defaults to
+`127.0.0.1:3001`, forwards to `http://127.0.0.1:8000`, and times out AI
+requests after 120 seconds. The server does not load `.env` files automatically;
+set variables in the shell or add environment-file loading deliberately later.
+
+## Backend-AI integration test
+
+The focused tests mock the AI service handler and do not require FastAPI,
+InsightFace, a model, or a video:
+
+```powershell
+cd backend
+npm test
+```
+
+To run only the integration test file:
+
+```powershell
+cd backend
+npx tsx --test tests/ai-integration.test.ts
+```
 
 ## AI service
 
