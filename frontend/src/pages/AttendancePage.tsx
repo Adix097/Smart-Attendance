@@ -20,7 +20,7 @@ export function AttendancePage() {
       <SessionHeader selectedClass={classSessions.selectedClass} session={attendance.session} busy={attendance.busy} onCreate={attendance.createSession} />
       <ClassSelector classes={classSessions.classes} selectedClassId={classSessions.selectedClassId} selectedClass={classSessions.selectedClass} busy={attendance.busy} onSelect={selectClass} />
       <SessionStatus error={classSessions.error || attendance.error} session={attendance.session} />
-      <ReviewActions session={attendance.session} videoPath={attendance.videoPath} busy={attendance.busy} onVideoPathChange={attendance.setVideoPath} onProcess={attendance.processVideo} />
+      <ReviewActions session={attendance.session} source={attendance.source} busy={attendance.busy} onSourceChange={attendance.setSource} onProcess={attendance.processVideo} />
       {attendance.session?.status === 'completed' && (
         <>
           <EvidenceSummary observations={attendance.observations} students={classSessions.selectedClass?.students ?? []} />

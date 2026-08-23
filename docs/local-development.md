@@ -56,10 +56,12 @@ npm run build
 npm start
 ```
 
-The current server reads `PORT`, `HOST`, `AI_SERVICE_URL`, and
-`AI_SERVICE_TIMEOUT_MS` from the process environment. It defaults to
+The current server reads `PORT`, `HOST`, `AI_SERVICE_URL`,
+`AI_SERVICE_TIMEOUT_MS`, and `APP_TIMEZONE` from the process environment. It defaults to
 `127.0.0.1:3001`, forwards to `http://127.0.0.1:8000`, and times out AI
-requests after 120 seconds. Backend entry points load an optional `backend/.env`
+requests after 120 seconds. `APP_TIMEZONE` defaults to `Asia/Kolkata` and is
+used to interpret recurring timetable weekdays and local start/end times;
+database timestamps remain timezone-aware instants. Backend entry points load an optional `backend/.env`
 file through `dotenv`; process environment variables remain valid and take
 precedence.
 

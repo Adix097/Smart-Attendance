@@ -13,12 +13,13 @@ import type {
   AttendanceSession,
   RecordStatus,
 } from '../api/types';
+import type { AttendanceInputSource } from '../types/attendance';
 
 export function useAttendance(selectedClassId: string) {
   const [session, setSession] = useState<AttendanceSession | null>(null);
   const [observations, setObservations] = useState<AttendanceObservation[]>([]);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
-  const [videoPath, setVideoPath] = useState('C:\\demo\\classroom.mp4');
+  const [source, setSource] = useState<AttendanceInputSource | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [reviewStatus, setReviewStatus] = useState<Record<string, RecordStatus>>({});
@@ -56,6 +57,8 @@ export function useAttendance(selectedClassId: string) {
     setObservations([]);
     setRecords([]);
     setReviewStatus({});
+    if (source?.type === 'webcam') source.stream.getTracks().forEach((track) => track.stop());
+    setSource(null);
   };
 
   const createSession = async () => {
@@ -83,7 +86,8 @@ export function useAttendance(selectedClassId: string) {
     setError('');
     setSession({ ...session, status: 'processing', error: null });
     try {
-      const result = await processAttendanceSession(session.id, videoPath);
+      if (!source) throw new Error('Select a recorded video or start the live camera before processing.');
+      const result = await processAttendanceSession(session.id, source);
       setSession(result.session);
       await loadEvidence(session.id);
     } catch (cause) {
@@ -119,8 +123,6 @@ export function useAttendance(selectedClassId: string) {
     session,
     observations,
     records,
-    videoPath,
-    setVideoPath,
     busy,
     error,
     setError,
@@ -130,5 +132,7 @@ export function useAttendance(selectedClassId: string) {
     processVideo,
     finalize,
     resetEvidence,
+    source,
+    setSource,
   };
 }

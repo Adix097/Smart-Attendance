@@ -1,4 +1,7 @@
 import crypto from 'node:crypto';
+import { unlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import { Router, type Request, type Response } from 'express';
 
@@ -40,7 +43,11 @@ export interface AttendanceRouteDependencies {
 
 type SessionStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
-interface ProcessRequest extends Omit<AIInferenceRequest, 'enrollment_dir'> {}
+interface ProcessRequest extends Omit<AIInferenceRequest, 'enrollment_dir' | 'video_path'> {
+  video_path?: string;
+  video_filename?: string;
+  video_data_base64?: string;
+}
 
 interface FinalizeRequest {
   record_id: string;
@@ -59,15 +66,12 @@ const isCreateRequest = (
   isNonEmptyString((value as Record<string, unknown>).class_session_id);
 
 const isProcessRequest = (value: unknown): value is ProcessRequest => {
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    !isNonEmptyString((value as Record<string, unknown>).video_path)
-  ) {
-    return false;
-  }
-
-  return true;
+  if (typeof value !== 'object' || value === null) return false;
+  const request = value as Record<string, unknown>;
+  return (
+    isNonEmptyString(request.video_path) ||
+    (isNonEmptyString(request.video_filename) && isNonEmptyString(request.video_data_base64))
+  );
 };
 
 const isFinalizeRequest = (value: unknown): value is FinalizeRequest => {
@@ -156,7 +160,7 @@ export function createAttendanceRouter({
       response.status(400).json({
         error: {
           code: 'INVALID_REQUEST',
-          message: 'video_path and enrollment_dir are required',
+          message: 'video_path or video_filename/video_data_base64 are required',
         },
       });
       return;
@@ -194,9 +198,23 @@ export function createAttendanceRouter({
 
     await updateAttendanceSessionStatus(repository, session.id, 'processing', null);
 
+    let temporaryVideoPath: string | null = null;
     try {
+      let videoPath = request.body.video_path;
+      if (!videoPath) {
+        const extension = path.extname(request.body.video_filename ?? '').toLowerCase();
+        if (!['.mp4', '.webm', '.mov', '.avi'].includes(extension)) {
+          throw new InferenceProcessingError('Unsupported video format');
+        }
+        const encoded = request.body.video_data_base64 ?? '';
+        const data = Buffer.from(encoded, 'base64');
+        if (data.length === 0) throw new InferenceProcessingError('The video file is empty');
+        temporaryVideoPath = path.join(os.tmpdir(), `smart-attendance-${crypto.randomUUID()}${extension}`);
+        await writeFile(temporaryVideoPath, data, { flag: 'wx' });
+        videoPath = temporaryVideoPath;
+      }
       const inferenceRequest: AIInferenceRequest = {
-        video_path: request.body.video_path,
+        video_path: videoPath,
         enrollment_dir: config.enrollmentRoot,
         model_name: request.body.model_name,
         provider: request.body.provider,
@@ -380,6 +398,8 @@ export function createAttendanceRouter({
           processingError: message,
         }),
       });
+    } finally {
+      if (temporaryVideoPath) await unlink(temporaryVideoPath).catch(() => undefined);
     }
   });
 

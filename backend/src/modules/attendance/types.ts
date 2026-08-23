@@ -35,12 +35,15 @@ export interface EnrolledStudent {
 
 export interface ClassSessionOption {
   id: string;
+  courseId?: string;
   courseCode: string;
   courseTitle: string;
   facultyName: string;
   classroomName: string;
   scheduledStart: string;
   scheduledEnd: string;
+  status?: 'upcoming' | 'active' | 'ended';
+  batch?: string | null;
   students: EnrolledStudent[];
 }
 

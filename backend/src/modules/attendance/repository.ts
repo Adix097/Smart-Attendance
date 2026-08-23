@@ -15,6 +15,13 @@ import type {
   ProvisionalAttendanceInput,
 } from './types.js';
 import { defaultVerificationConfig } from './verification.js';
+import {
+  occurrenceStatus,
+  selectRelevantOccurrences,
+  timetableOccurrences,
+  type TimetableOccurrenceRow,
+} from './schedule.js';
+import { config } from '../../config.js';
 
 function sessionFromRow(row: {
   id: string;
@@ -131,7 +138,8 @@ export class PgAttendanceRepository implements AttendanceRepository {
          id, attendance_session_id, class_session_id,
          scheduled_start, scheduled_end, entry_deadline
        )
-       VALUES ($1, $2, $3, $4, $5, $4 + ($6 * interval '1 minute'))
+       VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz,
+               $4::timestamptz + ($6::double precision * interval '1 minute'))
        ON CONFLICT (attendance_session_id) DO NOTHING`,
       [
         crypto.randomUUID(),
@@ -273,40 +281,13 @@ export class PgAttendanceRepository implements AttendanceRepository {
     );
     if (result.rows.length === 0) return;
 
-    const dayIndexes: Record<string, number> = {
-      Sunday: 0,
-      Monday: 1,
-      Tuesday: 2,
-      Wednesday: 3,
-      Thursday: 4,
-      Friday: 5,
-      Saturday: 6,
-    };
     const now = new Date();
-    let selected:
-      | { row: Record<string, unknown>; start: Date; end: Date }
-      | undefined;
-
-    for (const row of result.rows) {
-      const targetDay = dayIndexes[row.day_of_week as string];
-      const [hours, minutes] = String(row.start_time).split(':').map(Number);
-      const [endHours, endMinutes] = String(row.end_time).split(':').map(Number);
-      const daysAhead = (targetDay - now.getUTCDay() + 7) % 7;
-      const start = new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate() + (daysAhead === 0 && (hours * 60 + minutes) <=
-          (now.getUTCHours() * 60 + now.getUTCMinutes()) ? 7 : daysAhead),
-        hours,
-        minutes,
-      ));
-      const end = new Date(start);
-      end.setUTCHours(endHours, endMinutes, 0, 0);
-      if (!selected || start < selected.start) selected = { row, start, end };
-    }
-    if (!selected) return;
-
-    await this.database.query(
+    const selected = selectRelevantOccurrences(
+      timetableOccurrences(result.rows as TimetableOccurrenceRow[], now, config.timeZone),
+      now,
+    );
+    for (const occurrence of selected) {
+      await this.database.query(
       `INSERT INTO class_sessions (
          id, timetable_entry_id, course_id, faculty_id, classroom_id,
          scheduled_start, scheduled_end
@@ -316,18 +297,20 @@ export class PgAttendanceRepository implements AttendanceRepository {
        WHERE timetable_entry_id IS NOT NULL DO NOTHING`,
       [
         crypto.randomUUID(),
-        selected.row.id,
-        selected.row.course_id,
-        selected.row.faculty_id,
-        selected.start.toISOString(),
-        selected.end.toISOString(),
+        occurrence.row.id,
+        occurrence.row.course_id,
+        occurrence.row.faculty_id,
+        occurrence.start.toISOString(),
+        occurrence.end.toISOString(),
       ],
-    );
+      );
+    }
   }
 
   async getClassSessionOptions(): Promise<ClassSessionOption[]> {
     const result = await this.database.query(
-      `SELECT cs.id, c.code, c.title, f.name AS faculty_name,
+      `SELECT cs.id, cs.course_id, c.code, c.title, f.name AS faculty_name,
+              te.batch,
               COALESCE(cl.name, te.room) AS classroom_name,
               cs.scheduled_start, cs.scheduled_end
        FROM class_sessions cs
@@ -347,16 +330,44 @@ export class PgAttendanceRepository implements AttendanceRepository {
        )
        ORDER BY cs.scheduled_start, c.code`,
     );
+    const now = new Date();
+    const activeRows = result.rows.filter((row) => {
+      const start = row.scheduled_start as Date;
+      const end = row.scheduled_end as Date;
+      return start <= now && now < end;
+    });
+    const futureRows = result.rows
+      .filter((row) => (row.scheduled_start as Date) > now)
+      .sort((a, b) =>
+        (a.scheduled_start as Date).getTime() - (b.scheduled_start as Date).getTime(),
+      );
+    const relevantIds = new Set(
+      (activeRows.length > 0
+        ? activeRows
+        : futureRows.filter(
+            (row) =>
+              (row.scheduled_start as Date).getTime() ===
+              (futureRows[0]?.scheduled_start as Date | undefined)?.getTime(),
+          )
+      ).map((row) => row.id as string),
+    );
     const options: ClassSessionOption[] = [];
-    for (const row of result.rows) {
+    for (const row of result.rows.filter((item) => relevantIds.has(item.id as string))) {
       options.push({
         id: row.id as string,
+        courseId: row.course_id as string,
         courseCode: row.code as string,
         courseTitle: row.title as string,
         facultyName: row.faculty_name as string,
         classroomName: row.classroom_name as string,
         scheduledStart: (row.scheduled_start as Date).toISOString(),
         scheduledEnd: (row.scheduled_end as Date).toISOString(),
+        status: occurrenceStatus(
+          row.scheduled_start as Date,
+          row.scheduled_end as Date,
+          now,
+        ),
+        batch: row.batch as string | null,
         students: await this.getEnrolledStudents(row.id as string),
       });
     }

@@ -1,6 +1,7 @@
 export type SessionStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type ObservationStatus = 'confirmed' | 'uncertain' | 'unknown';
 export type RecordStatus = 'present' | 'absent' | 'uncertain' | 'unknown';
+export type { AttendanceInputSource } from '../types/attendance';
 
 export interface AttendanceSession {
   id: string;
@@ -19,12 +20,15 @@ export interface EnrolledStudent {
 
 export interface ClassSessionOption {
   id: string;
+  courseId?: string;
   courseCode: string;
   courseTitle: string;
   facultyName: string;
   classroomName: string;
   scheduledStart: string;
   scheduledEnd: string;
+  status?: 'upcoming' | 'active' | 'ended';
+  batch?: string | null;
   students: EnrolledStudent[];
 }
 

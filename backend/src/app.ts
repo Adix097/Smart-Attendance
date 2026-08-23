@@ -44,7 +44,7 @@ export function createApp(
   const attendanceInferenceHandler =
     dependencies.attendanceInferenceHandler ?? inferenceHandler;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '64mb' }));
 
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'ok', service: 'backend' });
