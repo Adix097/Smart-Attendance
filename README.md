@@ -60,6 +60,12 @@ Frontend defaults to `http://127.0.0.1:5173` and proxies `/api` to the backend.
 
 Production uses Vercel for the frontend and Render for both backend and AI. See [docs/](docs/) for architecture, env vars, deployment, and troubleshooting.
 
+## Live Deployment
+
+- Frontend: https://smart-attendance-five-silk.vercel.app/
+- Backend API: https://smart-attendance-backend-6vzc.onrender.com
+- AI Service: https://smart-attendance-ai-0b1g.onrender.com/
+
 ## Docs
 
 Full documentation is in [`docs/`](docs/README.md).
