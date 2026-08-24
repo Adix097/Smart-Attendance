@@ -115,7 +115,6 @@ export interface FinalizeAttendanceInput {
 
 export interface AttendanceRepository {
   classSessionExists(classSessionId: string): Promise<boolean>;
-  getEnrolledStudentIds(classSessionId: string): Promise<string[]>;
   ensureUpcomingClassSession(): Promise<void>;
   getClassSessionOptions(): Promise<ClassSessionOption[]>;
   getEnrolledStudents(classSessionId: string): Promise<EnrolledStudent[]>;

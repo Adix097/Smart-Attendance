@@ -37,10 +37,6 @@ class MockAttendanceRepository implements AttendanceRepository {
     return Promise.resolve(this.classSessions.has(classSessionId));
   }
 
-  getEnrolledStudentIds(classSessionId: string): Promise<string[]> {
-    return Promise.resolve(this.enrolled.get(classSessionId) ?? []);
-  }
-
   ensureUpcomingClassSession(): Promise<void> {
     return Promise.resolve();
   }
@@ -331,18 +327,18 @@ after(async () => {
 });
 
 describe('attendance session API', () => {
+  it('retrieves persisted class-session options with enrolled students', async () => {
+    const response = await request('/api/attendance-classes');
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.classes[0].courseCode, 'ARD253');
+    assert.equal(body.classes[0].students[0].studentNumber, '14119051925');
+  });
+
   it('creates a session for an existing class session', async () => {
     const response = await postJson('/api/attendance-sessions', {
       class_session_id: 'class-1',
-    });
-
-    it('retrieves persisted class-session options with enrolled students', async () => {
-      const response = await request('/api/attendance-classes');
-      const body = await response.json();
-
-      assert.equal(response.status, 200);
-      assert.equal(body.classes[0].courseCode, 'ARD253');
-      assert.equal(body.classes[0].students[0].studentNumber, '14119051925');
     });
     const body = await response.json();
 

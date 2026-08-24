@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { access, readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { Pool } from 'pg';
 
@@ -201,6 +201,19 @@ export function parseStudents(content: string): StudentRow[] {
 }
 
 const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp']);
+const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+function hasSupportedImageSignature(bytes: Buffer): boolean {
+  const isJpeg =
+    bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isPng = bytes.length >= 8 && bytes.subarray(0, 8).equals(pngSignature);
+  const isBmp = bytes.length >= 2 && bytes.toString('ascii', 0, 2) === 'BM';
+  const isWebp =
+    bytes.length >= 12 &&
+    bytes.toString('ascii', 0, 4) === 'RIFF' &&
+    bytes.toString('ascii', 8, 12) === 'WEBP';
+  return isJpeg || isPng || isBmp || isWebp;
+}
 
 export async function validateEnrollmentDirectories(
   students: StudentRow[],
@@ -219,8 +232,7 @@ export async function validateEnrollmentDirectories(
 
     const images = entries.filter(
       (entry) =>
-        entry.isFile() &&
-        imageExtensions.has(path.extname(entry.name).toLowerCase()),
+        entry.isFile() && imageExtensions.has(path.extname(entry.name).toLowerCase()),
     );
     if (images.length === 0) {
       throw new Error(
@@ -230,25 +242,19 @@ export async function validateEnrollmentDirectories(
 
     for (const image of images) {
       const imagePath = path.join(directory, image.name);
+      let bytes: Buffer;
       try {
-        await access(imagePath);
-        const details = await stat(imagePath);
-        if (details.size === 0) throw new Error('empty image');
-        const bytes = await readFile(imagePath);
-        const isJpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-        const isPng =
-          bytes.length >= 8 &&
-          bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-        const isBmp = bytes.length >= 2 && bytes.toString('ascii', 0, 2) === 'BM';
-        const isWebp =
-          bytes.length >= 12 &&
-          bytes.toString('ascii', 0, 4) === 'RIFF' &&
-          bytes.toString('ascii', 8, 12) === 'WEBP';
-        if (!isJpeg && !isPng && !isBmp && !isWebp) {
-          throw new Error('invalid image signature');
-        }
+        bytes = await readFile(imagePath);
       } catch {
         throw new Error(`Enrollment image is not readable: ${imagePath}`);
+      }
+      if (bytes.length === 0) {
+        throw new Error(`Enrollment image is empty: ${imagePath}`);
+      }
+      if (!hasSupportedImageSignature(bytes)) {
+        throw new Error(
+          `Enrollment image is not a JPEG, PNG, BMP, or WebP file: ${imagePath}`,
+        );
       }
     }
   }

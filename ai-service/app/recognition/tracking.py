@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import hypot
-from typing import Iterable
+from typing import Any, Iterable
 
 
 @dataclass(frozen=True)
@@ -11,6 +11,16 @@ class Box:
     y: float
     width: float
     height: float
+
+
+def box_from_face(face: Any) -> Box:
+    """Converts an InsightFace `[x1, y1, x2, y2]` bbox into an origin/size box."""
+    return Box(
+        x=float(face.bbox[0]),
+        y=float(face.bbox[1]),
+        width=float(face.bbox[2] - face.bbox[0]),
+        height=float(face.bbox[3] - face.bbox[1]),
+    )
 
 
 @dataclass

@@ -15,7 +15,7 @@ import type {
 } from '../api/types';
 import type { AttendanceInputSource } from '../types/attendance';
 
-export function useAttendance(selectedClassId: string) {
+export default function useAttendance(selectedClassId: string) {
   const [session, setSession] = useState<AttendanceSession | null>(null);
   const [observations, setObservations] = useState<AttendanceObservation[]>([]);
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
@@ -125,7 +125,6 @@ export function useAttendance(selectedClassId: string) {
     records,
     busy,
     error,
-    setError,
     reviewStatus,
     setReviewStatus,
     createSession,

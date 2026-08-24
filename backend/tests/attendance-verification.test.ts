@@ -3,7 +3,6 @@ import { describe, it } from 'node:test';
 
 import {
   calculateOccupancy,
-  classifyIdentity,
   verifyStudent,
   type AttendanceSighting,
   type VerificationConfig,
@@ -80,12 +79,6 @@ describe('attendance verification engine', () => {
       expectedCount: 4,
       observedCount: 2,
       occupancyRatio: 0.5,
-    });
-
-    it('keeps unknown and unexpected identities out of attendance', () => {
-      const expected = new Set(['student-1']);
-      assert.equal(classifyIdentity(null, expected), 'UNKNOWN');
-      assert.equal(classifyIdentity('student-2', expected), 'UNEXPECTED_STUDENT');
     });
   });
 });

@@ -2,10 +2,5 @@ fastapi>=0.115,<1
 uvicorn[standard]>=0.34,<1
 insightface==1.0.1
 onnxruntime
-numpy
-onnx
 opencv-python
-tqdm
-requests
-scipy
-scikit-image
+numpy

@@ -52,13 +52,9 @@ ai-service/embeddings/
 # Video / CCTV Data
 *.mp4
 *.avi
-*.mov
 *.mkv
+*.mov
 *.webm
-*.ts
-!backend/**/*.ts
-!frontend/src/api/**/*.ts
-!frontend/src/hooks/**/*.ts
 
 # CCTV / classroom recordings
 data/videos/
@@ -97,4 +93,6 @@ desktop.ini
 *.sqlite3
 *.db
 *.dump
-data
+
+# Real student master data and enrollment photos are never committed
+backend/data/

@@ -1,3 +1,5 @@
+import type { EnrolledStudent } from './types.js';
+
 export interface VerificationConfig {
   minimumSightings: number;
   minimumPresenceDurationSeconds: number;
@@ -62,16 +64,6 @@ export interface StudentVerification {
   proposedStatus: 'present' | 'uncertain' | 'unknown';
 }
 
-export function classifyIdentity(
-  studentId: string | null,
-  expectedStudentIds: ReadonlySet<string>,
-): VerificationResult {
-  if (studentId === null) return 'UNKNOWN';
-  return expectedStudentIds.has(studentId)
-    ? 'FACULTY_REVIEW_REQUIRED'
-    : 'UNEXPECTED_STUDENT';
-}
-
 export function verifyStudent(
   studentId: string,
   sightings: AttendanceSighting[],
@@ -88,6 +80,7 @@ export function verifyStudent(
     firstSeen && lastSeen
       ? Math.max(0, (lastSeen.getTime() - firstSeen.getTime()) / 1000)
       : 0;
+
   const lateEntry =
     firstSeen !== null &&
     firstSeen.getTime() >
@@ -100,30 +93,13 @@ export function verifyStudent(
     scheduledEnd.getTime() - lastSeen.getTime() <=
       config.requiredEndPresenceSeconds * 1000;
 
-  if (lateEntry) {
-    return {
-      studentId,
-      totalSightings: studentSightings.length,
-      firstSeen,
-      lastSeen,
-      presenceDurationSeconds,
-      lateEntry,
-      result: 'LATE_ENTRY',
-      proposedStatus: 'uncertain',
-    };
-  }
-  if (sufficientEvidence && presentAtEnd) {
-    return {
-      studentId,
-      totalSightings: studentSightings.length,
-      firstSeen,
-      lastSeen,
-      presenceDurationSeconds,
-      lateEntry,
-      result: 'AUTO_VERIFIED_PRESENT',
-      proposedStatus: 'present',
-    };
-  }
+  const autoVerified = !lateEntry && sufficientEvidence && presentAtEnd;
+  const result: VerificationResult = lateEntry
+    ? 'LATE_ENTRY'
+    : autoVerified
+      ? 'AUTO_VERIFIED_PRESENT'
+      : 'FACULTY_REVIEW_REQUIRED';
+
   return {
     studentId,
     totalSightings: studentSightings.length,
@@ -131,8 +107,8 @@ export function verifyStudent(
     lastSeen,
     presenceDurationSeconds,
     lateEntry,
-    result: 'FACULTY_REVIEW_REQUIRED',
-    proposedStatus: 'uncertain',
+    result,
+    proposedStatus: autoVerified ? 'present' : 'uncertain',
   };
 }
 
@@ -147,4 +123,3 @@ export function calculateOccupancy(
     occupancyRatio: expectedCount === 0 ? 0 : Math.min(1, observedCount / expectedCount),
   };
 }
-import type { EnrolledStudent } from './types.js';

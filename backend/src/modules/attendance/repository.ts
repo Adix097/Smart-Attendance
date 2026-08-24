@@ -37,6 +37,16 @@ function sessionFromRow(row: {
   };
 }
 
+function studentFromRow(row: Record<string, unknown>): EnrolledStudent {
+  return {
+    id: row.id as string,
+    studentNumber: row.student_number as string,
+    name: row.name as string,
+    batch: row.batch as string | null,
+    group: row.student_group as string | null,
+  };
+}
+
 function observationFromRow(row: Record<string, unknown>): AttendanceObservation {
   return {
     id: row.id as string,
@@ -75,7 +85,7 @@ function recordFromRow(row: Record<string, unknown>): AttendanceRecord {
 }
 
 export class PgAttendanceRepository implements AttendanceRepository {
-  constructor(private readonly database: Pool) {}
+  constructor(private readonly database: Pool) { }
 
   async classSessionExists(classSessionId: string): Promise<boolean> {
     const result = await this.database.query(
@@ -83,18 +93,6 @@ export class PgAttendanceRepository implements AttendanceRepository {
       [classSessionId],
     );
     return Boolean(result.rowCount);
-  }
-
-  async getEnrolledStudentIds(classSessionId: string): Promise<string[]> {
-    const result = await this.database.query(
-      `SELECT e.student_id
-       FROM enrollments e
-       JOIN class_sessions cs ON cs.course_id = e.course_id
-       WHERE cs.id = $1
-       ORDER BY e.student_id`,
-      [classSessionId],
-    );
-    return result.rows.map((row) => row.student_id as string);
   }
 
   async getEnrolledStudents(classSessionId: string): Promise<EnrolledStudent[]> {
@@ -114,13 +112,7 @@ export class PgAttendanceRepository implements AttendanceRepository {
        ORDER BY s.name, s.student_number`,
       [classSessionId],
     );
-    return result.rows.map((row) => ({
-      id: row.id as string,
-      studentNumber: row.student_number as string,
-      name: row.name as string,
-      batch: row.batch as string | null,
-      group: row.student_group as string | null,
-    }));
+    return result.rows.map(studentFromRow);
   }
 
   async createAttendanceContext(
@@ -185,13 +177,7 @@ export class PgAttendanceRepository implements AttendanceRepository {
        ORDER BY student_name, student_number`,
       [attendanceSessionId],
     );
-    return result.rows.map((row) => ({
-      id: row.id as string,
-      studentNumber: row.student_number as string,
-      name: row.name as string,
-      batch: row.batch as string | null,
-      group: row.student_group as string | null,
-    }));
+    return result.rows.map(studentFromRow);
   }
 
   async getStudentIdentityMap(): Promise<Map<string, EnrolledStudent>> {
@@ -200,16 +186,7 @@ export class PgAttendanceRepository implements AttendanceRepository {
        FROM students WHERE student_number IS NOT NULL`,
     );
     return new Map(
-      result.rows.map((row) => [
-        row.student_number as string,
-        {
-          id: row.id as string,
-          studentNumber: row.student_number as string,
-          name: row.name as string,
-          batch: row.batch as string | null,
-          group: row.student_group as string | null,
-        },
-      ]),
+      result.rows.map((row) => [row.student_number as string, studentFromRow(row)]),
     );
   }
 
@@ -224,10 +201,10 @@ export class PgAttendanceRepository implements AttendanceRepository {
     const row = result.rows[0];
     return row
       ? {
-          scheduledStart: (row.scheduled_start as Date).toISOString(),
-          scheduledEnd: (row.scheduled_end as Date).toISOString(),
-          entryDeadline: (row.entry_deadline as Date).toISOString(),
-        }
+        scheduledStart: (row.scheduled_start as Date).toISOString(),
+        scheduledEnd: (row.scheduled_end as Date).toISOString(),
+        entryDeadline: (row.entry_deadline as Date).toISOString(),
+      }
       : null;
   }
 
@@ -298,21 +275,21 @@ export class PgAttendanceRepository implements AttendanceRepository {
     );
     for (const occurrence of selected) {
       await this.database.query(
-      `INSERT INTO class_sessions (
+        `INSERT INTO class_sessions (
          id, timetable_entry_id, course_id, faculty_id, classroom_id,
          scheduled_start, scheduled_end
        )
        VALUES ($1, $2, $3, $4, NULL, $5, $6)
        ON CONFLICT (timetable_entry_id, scheduled_start)
        WHERE timetable_entry_id IS NOT NULL DO NOTHING`,
-      [
-        crypto.randomUUID(),
-        occurrence.row.id,
-        occurrence.row.course_id,
-        occurrence.row.faculty_id,
-        occurrence.start.toISOString(),
-        occurrence.end.toISOString(),
-      ],
+        [
+          crypto.randomUUID(),
+          occurrence.row.id,
+          occurrence.row.course_id,
+          occurrence.row.faculty_id,
+          occurrence.start.toISOString(),
+          occurrence.end.toISOString(),
+        ],
       );
     }
   }
@@ -341,28 +318,22 @@ export class PgAttendanceRepository implements AttendanceRepository {
        ORDER BY cs.scheduled_start, c.code`,
     );
     const now = new Date();
-    const activeRows = result.rows.filter((row) => {
-      const start = row.scheduled_start as Date;
-      const end = row.scheduled_end as Date;
-      return start <= now && now < end;
-    });
-    const futureRows = result.rows
-      .filter((row) => (row.scheduled_start as Date) > now)
-      .sort((a, b) =>
-        (a.scheduled_start as Date).getTime() - (b.scheduled_start as Date).getTime(),
-      );
-    const relevantIds = new Set(
-      (activeRows.length > 0
-        ? activeRows
-        : futureRows.filter(
-            (row) =>
-              (row.scheduled_start as Date).getTime() ===
-              (futureRows[0]?.scheduled_start as Date | undefined)?.getTime(),
-          )
-      ).map((row) => row.id as string),
+    const active = result.rows.filter(
+      (row) =>
+        (row.scheduled_start as Date) <= now && now < (row.scheduled_end as Date),
     );
+    const upcoming = result.rows.filter((row) => (row.scheduled_start as Date) > now);
+    const earliestUpcoming = upcoming[0]?.scheduled_start as Date | undefined;
+    const relevant =
+      active.length > 0
+        ? active
+        : upcoming.filter(
+          (row) =>
+            (row.scheduled_start as Date).getTime() === earliestUpcoming?.getTime(),
+        );
+
     const options: ClassSessionOption[] = [];
-    for (const row of result.rows.filter((item) => relevantIds.has(item.id as string))) {
+    for (const row of relevant) {
       options.push({
         id: row.id as string,
         courseId: row.course_id as string,

@@ -1,9 +1,0 @@
-insightface==1.0.1
-onnxruntime
-numpy
-onnx
-opencv-python
-tqdm
-requests
-scipy
-scikit-image

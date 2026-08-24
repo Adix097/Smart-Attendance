@@ -3,7 +3,7 @@ import { unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { Router, type Request, type Response } from 'express';
+import { Router, type Response } from 'express';
 
 import {
   AIServiceError,
@@ -11,19 +11,12 @@ import {
   type AIInferenceRequest,
   type AIInferenceResponse,
 } from '../../integrations/ai-service/index.js';
-import {
-  createAttendanceSession,
-  finalizeAttendance,
-  getAttendanceObservations,
-  getAttendanceRecords,
-  storeAIObservations,
-  updateAttendanceSessionStatus,
-  upsertProvisionalAttendance,
-} from './service.js';
 import type {
   AttendanceRecordStatus,
   AttendanceRepository,
+  AttendanceSession,
   AttendanceSessionDatabaseStatus,
+  EnrolledStudent,
 } from './types.js';
 import { config } from '../../config.js';
 import {
@@ -42,12 +35,19 @@ export interface AttendanceRouteDependencies {
   inferenceHandler?: InferenceHandler;
 }
 
-type SessionStatus = 'pending' | 'processing' | 'completed' | 'failed';
+const supportedVideoExtensions = ['.mp4', '.webm', '.mov', '.avi'];
 
-interface ProcessRequest extends Omit<AIInferenceRequest, 'enrollment_dir' | 'video_path'> {
+interface ProcessRequest {
   video_path?: string;
   video_filename?: string;
   video_data_base64?: string;
+  model_name?: string;
+  provider?: string;
+  sampling_fps?: number;
+  acceptance_threshold?: number;
+  unknown_threshold?: number;
+  identity_margin_threshold?: number;
+  minimum_observations?: number;
 }
 
 interface FinalizeRequest {
@@ -56,46 +56,55 @@ interface FinalizeRequest {
   status?: AttendanceRecordStatus;
 }
 
-const isNonEmptyString = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0;
+/** A stored sighting plus the recognition status used to weigh it as evidence. */
+interface ResolvedSighting {
+  id: string;
+  studentId: string | null;
+  trackerId: string;
+  observedAt: string;
+  cameraId: string | null;
+  similarity: number | null;
+  x: number | null;
+  y: number | null;
+  recognitionStatus: 'confirmed' | 'uncertain' | 'unknown';
+}
 
-const isCreateRequest = (
-  value: unknown,
-): value is { class_session_id: string } =>
-  typeof value === 'object' &&
-  value !== null &&
-  isNonEmptyString((value as Record<string, unknown>).class_session_id);
+const isNonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
+const asRecord = (value: unknown): Record<string, unknown> | null => typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : null;
 
-const isProcessRequest = (value: unknown): value is ProcessRequest => {
-  if (typeof value !== 'object' || value === null) return false;
-  const request = value as Record<string, unknown>;
+function isCreateRequest(value: unknown): value is { class_session_id: string } {
+  const request = asRecord(value);
+  return request !== null && isNonEmptyString(request.class_session_id);
+}
+
+function isProcessRequest(value: unknown): value is ProcessRequest {
+  const request = asRecord(value);
+  if (request === null) return false;
   return (
     isNonEmptyString(request.video_path) ||
-    (isNonEmptyString(request.video_filename) && isNonEmptyString(request.video_data_base64))
+    (isNonEmptyString(request.video_filename) &&
+      isNonEmptyString(request.video_data_base64))
   );
-};
+}
 
-const isFinalizeRequest = (value: unknown): value is FinalizeRequest => {
-  if (
-    typeof value !== 'object' ||
-    value === null ||
-    !isNonEmptyString((value as Record<string, unknown>).record_id) ||
-    (value as Record<string, unknown>).finalized_by !== undefined &&
-    !isNonEmptyString((value as Record<string, unknown>).finalized_by)
-  ) {
+function isFinalizeRequest(value: unknown): value is FinalizeRequest {
+  const request = asRecord(value);
+  if (request === null || !isNonEmptyString(request.record_id)) return false;
+  if (request.finalized_by !== undefined && !isNonEmptyString(request.finalized_by)) {
     return false;
   }
-  const status = (value as Record<string, unknown>).status;
   return (
-    status === undefined ||
-    status === 'present' ||
-    status === 'absent' ||
-    status === 'uncertain' ||
-    status === 'unknown'
+    request.status === undefined ||
+    request.status === 'present' ||
+    request.status === 'absent' ||
+    request.status === 'uncertain' ||
+    request.status === 'unknown'
   );
-};
+}
 
-function externalStatus(status: AttendanceSessionDatabaseStatus): SessionStatus {
+function externalStatus(
+  status: AttendanceSessionDatabaseStatus,
+): 'pending' | 'processing' | 'completed' | 'failed' {
   if (status === 'open') return 'pending';
   if (status === 'ready_for_review' || status === 'finalized') return 'completed';
   return status;
@@ -115,11 +124,114 @@ function sessionResponse(session: {
   };
 }
 
+function sendError(
+  response: Response,
+  statusCode: number,
+  code: string,
+  message: string,
+): void {
+  response.status(statusCode).json({ error: { code, message } });
+}
+
+/** Decodes an uploaded recording to a temporary file and returns its path. */
+async function writeTemporaryVideo(
+  filename: string,
+  base64Data: string,
+): Promise<string> {
+  const extension = path.extname(filename).toLowerCase();
+  if (!supportedVideoExtensions.includes(extension)) {
+    throw new Error('Unsupported video format');
+  }
+  const data = Buffer.from(base64Data, 'base64');
+  if (data.length === 0) throw new Error('The video file is empty');
+  const videoPath = path.join(
+    os.tmpdir(),
+    `smart-attendance-${crypto.randomUUID()}${extension}`,
+  );
+  await writeFile(videoPath, data, { flag: 'wx' });
+  return videoPath;
+}
+
+function resolveSightings(
+  inference: AIInferenceResponse,
+  identityMap: ReadonlyMap<string, EnrolledStudent>,
+  expectedStudentIds: ReadonlySet<string>,
+  scheduledStart: Date,
+): ResolvedSighting[] {
+  return (inference.sightings ?? []).map((sighting) => {
+    const { student } = resolveRecognizedIdentity(
+      sighting.identity,
+      identityMap,
+      expectedStudentIds,
+    );
+    const observedAt = new Date(
+      scheduledStart.getTime() + sighting.timestamp_seconds * 1000,
+    );
+    return {
+      id: crypto.randomUUID(),
+      studentId: student?.id ?? null,
+      trackerId: sighting.tracker_id,
+      observedAt: observedAt.toISOString(),
+      cameraId: sighting.camera_id ?? null,
+      similarity: sighting.best_similarity,
+      x: sighting.bbox?.x ?? null,
+      y: sighting.bbox?.y ?? null,
+      recognitionStatus: sighting.status,
+    };
+  });
+}
+
+function occupancyByInterval(
+  sightings: ResolvedSighting[],
+  expectedStudentIds: ReadonlySet<string>,
+  scheduledStart: Date,
+): Map<string, Set<string>> {
+  const { sightingIntervalSeconds } = defaultVerificationConfig;
+  const buckets = new Map<string, Set<string>>();
+  for (const sighting of sightings) {
+    if (
+      sighting.recognitionStatus !== 'confirmed' ||
+      sighting.studentId === null ||
+      !expectedStudentIds.has(sighting.studentId)
+    ) {
+      continue;
+    }
+    const elapsedSeconds =
+      (new Date(sighting.observedAt).getTime() - scheduledStart.getTime()) / 1000;
+    const bucketStart =
+      Math.floor(elapsedSeconds / sightingIntervalSeconds) * sightingIntervalSeconds;
+    const observedAt = new Date(
+      scheduledStart.getTime() + bucketStart * 1000,
+    ).toISOString();
+    const students = buckets.get(observedAt) ?? new Set<string>();
+    students.add(sighting.studentId);
+    buckets.set(observedAt, students);
+  }
+  return buckets;
+}
+
 export function createAttendanceRouter({
   repository,
   inferenceHandler = requestAIInference,
 }: AttendanceRouteDependencies): Router {
   const router = Router();
+
+  async function findSession(
+    id: string,
+    response: Response,
+  ): Promise<AttendanceSession | null> {
+    const session = await repository.getAttendanceSession(id);
+    if (!session) {
+      sendError(
+        response,
+        404,
+        'ATTENDANCE_SESSION_NOT_FOUND',
+        'Attendance session not found',
+      );
+      return null;
+    }
+    return session;
+  }
 
   router.get('/attendance-classes', async (_request, response) => {
     await repository.ensureUpcomingClassSession();
@@ -128,26 +240,15 @@ export function createAttendanceRouter({
 
   router.post('/attendance-sessions', async (request, response) => {
     if (!isCreateRequest(request.body)) {
-      response.status(400).json({
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'class_session_id is required',
-        },
-      });
+      sendError(response, 400, 'INVALID_REQUEST', 'class_session_id is required');
       return;
     }
-
     if (!(await repository.classSessionExists(request.body.class_session_id))) {
-      response.status(404).json({
-        error: {
-          code: 'CLASS_SESSION_NOT_FOUND',
-          message: 'Class session not found',
-        },
-      });
+      sendError(response, 404, 'CLASS_SESSION_NOT_FOUND', 'Class session not found');
       return;
     }
 
-    const session = await createAttendanceSession(repository, {
+    const session = await repository.createAttendanceSession({
       id: crypto.randomUUID(),
       classSessionId: request.body.class_session_id,
       status: 'open',
@@ -158,63 +259,49 @@ export function createAttendanceRouter({
 
   router.post('/attendance-sessions/:id/process', async (request, response) => {
     if (!isProcessRequest(request.body)) {
-      response.status(400).json({
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'video_path or video_filename/video_data_base64 are required',
-        },
-      });
+      sendError(
+        response,
+        400,
+        'INVALID_REQUEST',
+        'video_path or video_filename/video_data_base64 are required',
+      );
       return;
     }
 
-    const session = await repository.getAttendanceSession(request.params.id);
-    if (!session) {
-      response.status(404).json({
-        error: {
-          code: 'ATTENDANCE_SESSION_NOT_FOUND',
-          message: 'Attendance session not found',
-        },
-      });
-      return;
-    }
+    const session = await findSession(request.params.id, response);
+    if (!session) return;
+
     if (session.status === 'ready_for_review' || session.status === 'finalized') {
-      response.json({
-        session: sessionResponse(session),
-        observation_count: 0,
-      });
+      response.json({ session: sessionResponse(session), observation_count: 0 });
       return;
     }
 
-    const enrolledStudents = await repository.getExpectedStudents(session.id);
-    const globalIdentityMap = await repository.getStudentIdentityMap();
-    if (enrolledStudents.length === 0) {
-      response.status(400).json({
-        error: {
-          code: 'NO_ENROLLED_STUDENTS',
-          message: 'The selected class session has no enrolled students',
-        },
-      });
+    const expectedStudents = await repository.getExpectedStudents(session.id);
+    if (expectedStudents.length === 0) {
+      sendError(
+        response,
+        400,
+        'NO_ENROLLED_STUDENTS',
+        'The selected class session has no enrolled students',
+      );
       return;
     }
+    const identityMap = await repository.getStudentIdentityMap();
+    const expectedStudentIds = new Set(expectedStudents.map((student) => student.id));
 
-    await updateAttendanceSessionStatus(repository, session.id, 'processing', null);
+    await repository.updateAttendanceSessionStatus(session.id, 'processing', null);
 
     let temporaryVideoPath: string | null = null;
     try {
       let videoPath = request.body.video_path;
       if (!videoPath) {
-        const extension = path.extname(request.body.video_filename ?? '').toLowerCase();
-        if (!['.mp4', '.webm', '.mov', '.avi'].includes(extension)) {
-          throw new InferenceProcessingError('Unsupported video format');
-        }
-        const encoded = request.body.video_data_base64 ?? '';
-        const data = Buffer.from(encoded, 'base64');
-        if (data.length === 0) throw new InferenceProcessingError('The video file is empty');
-        temporaryVideoPath = path.join(os.tmpdir(), `smart-attendance-${crypto.randomUUID()}${extension}`);
-        await writeFile(temporaryVideoPath, data, { flag: 'wx' });
+        temporaryVideoPath = await writeTemporaryVideo(
+          request.body.video_filename ?? '',
+          request.body.video_data_base64 ?? '',
+        );
         videoPath = temporaryVideoPath;
       }
-      const inferenceRequest: AIInferenceRequest = {
+      const inference = await inferenceHandler({
         video_path: videoPath,
         enrollment_dir: config.enrollmentRoot,
         model_name: request.body.model_name,
@@ -224,92 +311,50 @@ export function createAttendanceRouter({
         unknown_threshold: request.body.unknown_threshold,
         identity_margin_threshold: request.body.identity_margin_threshold,
         minimum_observations: request.body.minimum_observations,
-      };
-      const inference = await inferenceHandler(inferenceRequest);
-
+      });
       if (inference.errors.length > 0) {
-        throw new InferenceProcessingError(inference.errors.join('; '));
+        throw new Error(inference.errors.join('; '));
       }
 
       const context = await repository.getAttendanceContext(session.id);
-      if (!context) {
-        throw new InferenceProcessingError('Attendance context is missing');
-      }
-      const expectedStudentIds = new Set(enrolledStudents.map((student) => student.id));
-      const sightings = (inference.sightings ?? []).map((sighting) => {
-        const globalStudent = resolveRecognizedIdentity(
-          sighting.identity,
-          globalIdentityMap,
-          expectedStudentIds,
-        ).student;
-        const observedAt = new Date(
-          new Date(context.scheduledStart).getTime() +
-            sighting.timestamp_seconds * 1000,
-        );
-        return {
-          id: crypto.randomUUID(),
-          studentId: globalStudent?.id ?? null,
-          trackerId: sighting.tracker_id,
-          observedAt: observedAt.toISOString(),
-          cameraId: sighting.camera_id ?? null,
-          similarity: sighting.best_similarity,
-          x: sighting.bbox?.x ?? null,
-          y: sighting.bbox?.y ?? null,
-          recognitionStatus: sighting.status,
-        };
-      });
+      if (!context) throw new Error('Attendance context is missing');
+      const scheduledStart = new Date(context.scheduledStart);
+      const scheduledEnd = new Date(context.scheduledEnd);
+
+      const sightings = resolveSightings(
+        inference,
+        identityMap,
+        expectedStudentIds,
+        scheduledStart,
+      );
       await repository.storeAttendanceSightings(session.id, sightings);
-      if (sightings.length > 0) {
-        const snapshots = new Map<string, Set<string>>();
-        for (const sighting of sightings) {
-          if (
-            sighting.recognitionStatus !== 'confirmed' ||
-            sighting.studentId === null ||
-            !expectedStudentIds.has(sighting.studentId)
-          ) {
-            continue;
-          }
-          const elapsedSeconds =
-            (new Date(sighting.observedAt).getTime() -
-              new Date(context.scheduledStart).getTime()) /
-            1000;
-          const bucket =
-            Math.floor(elapsedSeconds / defaultVerificationConfig.sightingIntervalSeconds) *
-            defaultVerificationConfig.sightingIntervalSeconds;
-          const bucketTime = new Date(
-            new Date(context.scheduledStart).getTime() + bucket * 1000,
-          ).toISOString();
-          const ids = snapshots.get(bucketTime) ?? new Set<string>();
-          ids.add(sighting.studentId);
-          snapshots.set(bucketTime, ids);
-        }
-        for (const [observedAt, ids] of snapshots) {
-          const occupancy = calculateOccupancy(enrolledStudents.length, ids);
-          await repository.storeOccupancySnapshot(
-            session.id,
-            observedAt,
-            occupancy.expectedCount,
-            occupancy.observedCount,
-          );
-        }
+
+      for (const [observedAt, studentIds] of occupancyByInterval(
+        sightings,
+        expectedStudentIds,
+        scheduledStart,
+      )) {
+        const occupancy = calculateOccupancy(expectedStudents.length, studentIds);
+        await repository.storeOccupancySnapshot(
+          session.id,
+          observedAt,
+          occupancy.expectedCount,
+          occupancy.observedCount,
+        );
       }
 
-      const observations = await storeAIObservations(
-        repository,
+      const observations = await repository.storeAIObservations(
         session.id,
         inference.results.map((result) => {
           const resolved = resolveRecognizedIdentity(
             result.status === 'unknown' ? null : result.identity,
-            globalIdentityMap,
+            identityMap,
             expectedStudentIds,
           );
-          const globalStudent = resolved.student;
-          const studentId = globalStudent?.id ?? null;
-          const verificationResult =
-            resolved.status === 'EXPECTED' ? 'FACULTY_REVIEW_REQUIRED' : resolved.status;
+          const student = resolved.student;
           return {
             id: crypto.randomUUID(),
-            studentId,
+            studentId: student?.id ?? null,
             status: result.status,
             similarity: result.best_similarity,
             observationCount: result.observation_count,
@@ -317,17 +362,20 @@ export function createAttendanceRouter({
             identityMargin: result.identity_margin,
             evidence: {
               identity: result.identity,
-              global_student_name: globalStudent?.name ?? null,
-              global_student_number: globalStudent?.studentNumber ?? null,
-              global_student_batch: globalStudent?.batch ?? null,
-              global_student_group: globalStudent?.group ?? null,
+              global_student_name: student?.name ?? null,
+              global_student_number: student?.studentNumber ?? null,
+              global_student_batch: student?.batch ?? null,
+              global_student_group: student?.group ?? null,
               video: inference.video,
               sampling: inference.sampling,
               detected_faces: inference.detected_faces,
               sampled_frames: inference.sampled_frames,
               errors: inference.errors,
               warnings: inference.warnings,
-              verification_result: verificationResult,
+              verification_result:
+                resolved.status === 'EXPECTED'
+                  ? 'FACULTY_REVIEW_REQUIRED'
+                  : resolved.status,
             },
             modelName: inference.model_name,
             modelVersion: inference.model_version,
@@ -335,39 +383,39 @@ export function createAttendanceRouter({
         }),
       );
 
-      for (const student of enrolledStudents) {
+      const confirmedSightings = sightings
+        .filter((sighting) => sighting.recognitionStatus === 'confirmed')
+        .map((sighting) => ({ ...sighting, observedAt: new Date(sighting.observedAt) }));
+
+      for (const student of expectedStudents) {
         const verification = verifyStudent(
           student.id,
-          sightings.filter((sighting) => sighting.recognitionStatus === 'confirmed').map((sighting) => ({
-            ...sighting,
-            observedAt: new Date(sighting.observedAt),
-          })),
-          new Date(context.scheduledStart),
-          new Date(context.scheduledEnd),
+          confirmedSightings,
+          scheduledStart,
+          scheduledEnd,
         );
         const evidenceObservation = observations.find(
           (observation) => observation.studentId === student.id,
         );
-        if (evidenceObservation || verification.totalSightings > 0) {
-          await upsertProvisionalAttendance(repository, {
-            id: crypto.randomUUID(),
-            attendanceSessionId: session.id,
-            studentId: student.id,
-            status: verification.proposedStatus,
-            source: 'ai',
-            confidence: evidenceObservation?.similarity ?? null,
-            evidenceObservationId: evidenceObservation?.id ?? null,
-            verificationResult: verification.result,
-            firstSeen: verification.firstSeen?.toISOString() ?? null,
-            lastSeen: verification.lastSeen?.toISOString() ?? null,
-            totalSightings: verification.totalSightings,
-            lateEntry: verification.lateEntry,
-          });
-        }
+        if (!evidenceObservation && verification.totalSightings === 0) continue;
+
+        await repository.upsertProvisionalAttendance({
+          id: crypto.randomUUID(),
+          attendanceSessionId: session.id,
+          studentId: student.id,
+          status: verification.proposedStatus,
+          source: 'ai',
+          confidence: evidenceObservation?.similarity ?? null,
+          evidenceObservationId: evidenceObservation?.id ?? null,
+          verificationResult: verification.result,
+          firstSeen: verification.firstSeen?.toISOString() ?? null,
+          lastSeen: verification.lastSeen?.toISOString() ?? null,
+          totalSightings: verification.totalSightings,
+          lateEntry: verification.lateEntry,
+        });
       }
 
-      const completed = await updateAttendanceSessionStatus(
-        repository,
+      const completed = await repository.updateAttendanceSessionStatus(
         session.id,
         'ready_for_review',
         null,
@@ -380,22 +428,12 @@ export function createAttendanceRouter({
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Inference processing failed';
-      await updateAttendanceSessionStatus(repository, session.id, 'failed', message);
-
-      if (error instanceof AIServiceError) {
-        response.status(502).json({
-          error: { code: error.code, message: error.message },
-          session: sessionResponse({
-            ...session,
-            status: 'failed',
-            processingError: message,
-          }),
-        });
-        return;
-      }
-
+      await repository.updateAttendanceSessionStatus(session.id, 'failed', message);
       response.status(502).json({
-        error: { code: 'INFERENCE_FAILED', message },
+        error: {
+          code: error instanceof AIServiceError ? error.code : 'INFERENCE_FAILED',
+          message,
+        },
         session: sessionResponse({
           ...session,
           status: 'failed',
@@ -408,71 +446,35 @@ export function createAttendanceRouter({
   });
 
   router.get('/attendance-sessions/:id/status', async (request, response) => {
-    const session = await repository.getAttendanceSession(request.params.id);
-    if (!session) {
-      response.status(404).json({
-        error: {
-          code: 'ATTENDANCE_SESSION_NOT_FOUND',
-          message: 'Attendance session not found',
-        },
-      });
-      return;
-    }
-    response.json(sessionResponse(session));
+    const session = await findSession(request.params.id, response);
+    if (session) response.json(sessionResponse(session));
   });
 
   router.get('/attendance-sessions/:id/observations', async (request, response) => {
-    const session = await repository.getAttendanceSession(request.params.id);
-    if (!session) {
-      response.status(404).json({
-        error: {
-          code: 'ATTENDANCE_SESSION_NOT_FOUND',
-          message: 'Attendance session not found',
-        },
-      });
-      return;
-    }
-    response.json({ observations: await getAttendanceObservations(repository, session.id) });
+    const session = await findSession(request.params.id, response);
+    if (!session) return;
+    response.json({
+      observations: await repository.getAttendanceObservations(session.id),
+    });
   });
 
   router.get('/attendance-sessions/:id/records', async (request, response) => {
-    const session = await repository.getAttendanceSession(request.params.id);
-    if (!session) {
-      response.status(404).json({
-        error: {
-          code: 'ATTENDANCE_SESSION_NOT_FOUND',
-          message: 'Attendance session not found',
-        },
-      });
-      return;
-    }
-    response.json({ records: await getAttendanceRecords(repository, session.id) });
+    const session = await findSession(request.params.id, response);
+    if (!session) return;
+    response.json({ records: await repository.getAttendanceRecords(session.id) });
   });
 
   router.post('/attendance-sessions/:id/finalize', async (request, response) => {
     if (!isFinalizeRequest(request.body)) {
-      response.status(400).json({
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'record_id is required',
-        },
-      });
+      sendError(response, 400, 'INVALID_REQUEST', 'record_id is required');
       return;
     }
 
-    const session = await repository.getAttendanceSession(request.params.id);
-    if (!session) {
-      response.status(404).json({
-        error: {
-          code: 'ATTENDANCE_SESSION_NOT_FOUND',
-          message: 'Attendance session not found',
-        },
-      });
-      return;
-    }
+    const session = await findSession(request.params.id, response);
+    if (!session) return;
 
     try {
-      const record = await finalizeAttendance(repository, {
+      const record = await repository.finalizeAttendance({
         recordId: request.body.record_id,
         attendanceSessionId: session.id,
         finalizedBy: request.body.finalized_by ?? null,
@@ -480,21 +482,14 @@ export function createAttendanceRouter({
       });
       response.json({ record });
     } catch (error) {
-      response.status(400).json({
-        error: {
-          code: 'FINALIZATION_FAILED',
-          message: error instanceof Error ? error.message : 'Unable to finalize attendance',
-        },
-      });
+      sendError(
+        response,
+        400,
+        'FINALIZATION_FAILED',
+        error instanceof Error ? error.message : 'Unable to finalize attendance',
+      );
     }
   });
 
   return router;
-}
-
-class InferenceProcessingError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'InferenceProcessingError';
-  }
 }

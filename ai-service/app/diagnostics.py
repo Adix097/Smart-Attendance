@@ -6,12 +6,12 @@ from typing import Any
 import cv2
 
 from app.config import InferenceConfig
+from app.pipelines.recognition import model_version
 from app.recognition.aggregation import status_for_sighting
 from app.recognition.gallery import load_gallery
 from app.recognition.matching import match_embedding
-from app.recognition.tracking import Box, LightweightTracker
+from app.recognition.tracking import LightweightTracker, box_from_face
 from app.schemas import BoundingBox, RecognitionSighting, RecognitionTestResponse
-from app.pipelines.recognition import model_version
 
 
 def run_recognition_test(
@@ -37,15 +37,12 @@ def run_recognition_test(
         )
 
     face = faces[0]
-    box = Box(
-        x=float(face.bbox[0]),
-        y=float(face.bbox[1]),
-        width=float(face.bbox[2] - face.bbox[0]),
-        height=float(face.bbox[3] - face.bbox[1]),
-    )
+    box = box_from_face(face)
     tracker_id = LightweightTracker().update([box], 0)[0]
     match = match_embedding(face.embedding, gallery)
-    identity = match.identity if match.best_similarity >= config.unknown_threshold else None
+    identity = (
+        match.identity if match.best_similarity >= config.unknown_threshold else None
+    )
     return RecognitionTestResponse(
         model_name=config.model_name,
         model_version=model_version(),

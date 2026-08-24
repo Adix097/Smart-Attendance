@@ -1,5 +1,4 @@
-import { readFile } from 'node:fs/promises';
-import { readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { pool } from './pool.js';

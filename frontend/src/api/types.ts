@@ -1,7 +1,6 @@
 export type SessionStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type ObservationStatus = 'confirmed' | 'uncertain' | 'unknown';
 export type RecordStatus = 'present' | 'absent' | 'uncertain' | 'unknown';
-export type { AttendanceInputSource } from '../types/attendance';
 
 export interface AttendanceSession {
   id: string;

@@ -16,26 +16,6 @@ class Observation:
     identity_margin: float | None
 
 
-def _status(
-    observation_count: int,
-    best_similarity: float,
-    identity_margin: float | None,
-    config: InferenceConfig,
-) -> str:
-    if best_similarity < config.unknown_threshold:
-        return "unknown"
-    if observation_count < config.minimum_observations:
-        return "uncertain"
-    if best_similarity < config.acceptance_threshold:
-        return "uncertain"
-    if (
-        identity_margin is not None
-        and identity_margin < config.identity_margin_threshold
-    ):
-        return "uncertain"
-    return "confirmed"
-
-
 def status_for_sighting(
     best_similarity: float,
     identity_margin: float | None,
@@ -51,6 +31,18 @@ def status_for_sighting(
     ):
         return "uncertain"
     return "confirmed"
+
+
+def _aggregate_status(
+    observation_count: int,
+    best_similarity: float,
+    identity_margin: float | None,
+    config: InferenceConfig,
+) -> str:
+    status = status_for_sighting(best_similarity, identity_margin, config)
+    if status == "confirmed" and observation_count < config.minimum_observations:
+        return "uncertain"
+    return status
 
 
 def aggregate_observations(
@@ -79,7 +71,7 @@ def aggregate_observations(
         results.append(
             RecognitionResult(
                 identity=identity,
-                status=_status(
+                status=_aggregate_status(
                     len(items), best_similarity, average_margin, config
                 ),
                 observation_count=len(items),

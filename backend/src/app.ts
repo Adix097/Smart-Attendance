@@ -17,14 +17,10 @@ type AIInferenceHandler = (
 
 interface AppDependencies {
   attendanceRepository?: AttendanceRepository;
-  attendanceInferenceHandler?: AIInferenceHandler;
 }
 
-const isInferenceRequest = (value: unknown): value is AIInferenceRequest => {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-
+function isInferenceRequest(value: unknown): value is AIInferenceRequest {
+  if (typeof value !== 'object' || value === null) return false;
   const request = value as Record<string, unknown>;
   return (
     typeof request.video_path === 'string' &&
@@ -32,17 +28,15 @@ const isInferenceRequest = (value: unknown): value is AIInferenceRequest => {
     typeof request.enrollment_dir === 'string' &&
     request.enrollment_dir.length > 0
   );
-};
+}
 
 export function createApp(
   inferenceHandler: AIInferenceHandler = requestAIInference,
   dependencies: AppDependencies = {},
 ) {
   const app = express();
-  const attendanceRepository =
+  const repository =
     dependencies.attendanceRepository ?? new PgAttendanceRepository(pool);
-  const attendanceInferenceHandler =
-    dependencies.attendanceInferenceHandler ?? inferenceHandler;
 
   app.use(express.json({ limit: '64mb' }));
 
@@ -62,42 +56,20 @@ export function createApp(
     }
 
     try {
-      const result = await inferenceHandler(request.body);
-      response.json(result);
+      response.json(await inferenceHandler(request.body));
     } catch (error) {
-      if (error instanceof AIServiceError) {
-        const status =
-          error.code === 'AI_SERVICE_HTTP_ERROR' &&
-          error.statusCode !== undefined &&
-          error.statusCode >= 400 &&
-          error.statusCode < 500
-            ? 502
-            : 502;
-        response.status(status).json({
-          error: {
-            code: error.code,
-            message: error.message,
-          },
-        });
-        return;
-      }
-
-      response.status(502).json({
-        error: {
-          code: 'AI_SERVICE_UNAVAILABLE',
-          message: 'AI service integration failed',
-        },
-      });
+      const failure =
+        error instanceof AIServiceError
+          ? { code: error.code, message: error.message }
+          : {
+              code: 'AI_SERVICE_UNAVAILABLE',
+              message: 'AI service integration failed',
+            };
+      response.status(502).json({ error: failure });
     }
   });
 
-  app.use(
-    '/api',
-    createAttendanceRouter({
-      repository: attendanceRepository,
-      inferenceHandler: attendanceInferenceHandler,
-    }),
-  );
+  app.use('/api', createAttendanceRouter({ repository, inferenceHandler }));
 
   return app;
 }

@@ -2,7 +2,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from app.config import InferenceConfig, settings
 from app.diagnostics import run_recognition_test
@@ -19,14 +19,18 @@ from app.schemas import (
 app = FastAPI(title="Smart Attendance AI Service", version="0.1.0")
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "ai-service"}
-
-
 @lru_cache(maxsize=1)
 def _analysis_for(config: InferenceConfig):
     return build_analysis(config)
+
+
+def _dev_harness_enabled() -> bool:
+    return os.getenv("AI_ENABLE_DEV_HARNESS", "").lower() == "true"
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok", "service": "ai-service"}
 
 
 @app.post("/v1/inference", response_model=InferenceResponse)
@@ -69,14 +73,9 @@ def inference(request: InferenceRequest) -> InferenceResponse:
         )
 
 
-@app.post(
-    "/v1/dev/recognition-test",
-    response_model=RecognitionTestResponse,
-)
+@app.post("/v1/dev/recognition-test", response_model=RecognitionTestResponse)
 def recognition_test(request: RecognitionTestRequest) -> RecognitionTestResponse:
-    if os.getenv("AI_ENABLE_DEV_HARNESS", "").lower() != "true":
-        from fastapi import HTTPException
-
+    if not _dev_harness_enabled():
         raise HTTPException(status_code=404, detail="Development harness is disabled")
     try:
         return run_recognition_test(
@@ -86,23 +85,17 @@ def recognition_test(request: RecognitionTestRequest) -> RecognitionTestResponse
             analysis=_analysis_for(settings),
         )
     except (OSError, RuntimeError, ValueError) as error:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 def server_config() -> tuple[str, int]:
     host = os.getenv("HOST", "127.0.0.1")
-    raw_port = os.getenv("PORT", "8000")
-
     try:
-        port = int(raw_port)
+        port = int(os.getenv("PORT", "8000"))
     except ValueError as error:
         raise ValueError("PORT must be an integer") from error
-
     if not 1 <= port <= 65535:
         raise ValueError("PORT must be between 1 and 65535")
-
     return host, port
 
 
