@@ -1,7 +1,10 @@
 export type RecognitionStatus = 'confirmed' | 'uncertain' | 'unknown';
 
 export interface AIInferenceRequest {
-  video_path: string;
+  /** Only usable when the AI service shares a filesystem with the backend. */
+  video_path?: string;
+  video_filename?: string;
+  video_data_base64?: string;
   enrollment_dir: string;
   model_name?: string;
   provider?: string;

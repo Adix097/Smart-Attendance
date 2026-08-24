@@ -1,4 +1,8 @@
-export { AIServiceError, requestAIInference } from './client.js';
+export {
+  AIServiceError,
+  requestAIInference,
+  safeAiServiceOrigin,
+} from './client.js';
 export type {
   AIInferenceRequest,
   AIInferenceResponse,

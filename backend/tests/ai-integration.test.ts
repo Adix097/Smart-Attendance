@@ -20,7 +20,7 @@ const validResponse: AIInferenceResponse = {
   model_version: '1.0.1',
   processing_time_seconds: 1.2,
   video: {
-    path: validRequest.video_path,
+    path: validRequest.video_path ?? '',
     total_frames: 10,
     source_fps: 25,
     duration_seconds: 0.4,
@@ -111,6 +111,7 @@ describe('POST /api/ai/inference', () => {
       error: {
         code: 'AI_SERVICE_UNAVAILABLE',
         message: 'Unable to reach AI service',
+        retryable: false,
       },
     });
   });
@@ -132,6 +133,7 @@ describe('POST /api/ai/inference', () => {
       error: {
         code: 'AI_SERVICE_HTTP_ERROR',
         message: 'AI service returned HTTP 500',
+        retryable: false,
       },
     });
   });
@@ -153,6 +155,7 @@ describe('POST /api/ai/inference', () => {
         code: 'AI_SERVICE_INVALID_RESPONSE',
         message:
           'AI service returned a response that does not match the inference contract',
+        retryable: false,
       },
     });
   });
@@ -164,7 +167,8 @@ describe('POST /api/ai/inference', () => {
     assert.deepEqual(await response.json(), {
       error: {
         code: 'INVALID_REQUEST',
-        message: 'video_path and enrollment_dir are required strings',
+        message:
+          'enrollment_dir plus either video_path or video_filename with video_data_base64 are required',
       },
     });
   });

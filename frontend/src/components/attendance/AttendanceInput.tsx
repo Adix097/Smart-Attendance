@@ -44,6 +44,7 @@ export default function AttendanceInput({
           type="button"
           className={tabClass('recorded-video')}
           onClick={() => selectMode('recorded-video')}
+          disabled={disabled}
         >
           Recorded Video
         </button>
@@ -51,6 +52,7 @@ export default function AttendanceInput({
           type="button"
           className={tabClass('webcam')}
           onClick={() => selectMode('webcam')}
+          disabled={disabled}
         >
           Live Camera
         </button>

@@ -16,7 +16,7 @@ if (!Number.isInteger(aiServiceTimeoutMs) || aiServiceTimeoutMs < 1) {
 }
 
 export const config = {
-  host: process.env.HOST ?? '127.0.0.1',
+  host: process.env.HOST?.trim() || '0.0.0.0',
   port,
   aiServiceUrl: process.env.AI_SERVICE_URL ?? 'http://127.0.0.1:8000',
   aiServiceTimeoutMs,

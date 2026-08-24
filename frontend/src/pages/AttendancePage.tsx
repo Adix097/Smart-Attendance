@@ -72,6 +72,7 @@ export default function AttendancePage() {
       />
       <ReviewActions
         session={attendance.session}
+        selectedClass={classSessions.selectedClass}
         source={attendance.source}
         busy={attendance.busy}
         onSourceChange={attendance.setSource}

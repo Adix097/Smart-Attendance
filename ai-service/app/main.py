@@ -21,6 +21,7 @@ from app.schemas import (
     RecognitionTestResponse,
     SamplingConfiguration,
 )
+from app.video_source import resolved_video
 
 
 app = FastAPI(title="Smart Attendance AI Service", version="0.1.0")
@@ -57,18 +58,23 @@ def inference(request: InferenceRequest) -> InferenceResponse:
     )
     try:
         analysis = _analysis_for(config)
-        return run_video_inference(
-            video_path=Path(request.video_path),
-            enrollment_dir=Path(request.enrollment_dir),
-            config=config,
-            analysis=analysis,
-            gallery=load_enrollment_gallery(
-                analysis,
-                Path(request.enrollment_dir),
-                config,
-                enrollment_settings,
-            ),
-        )
+        with resolved_video(
+            request.video_path,
+            request.video_filename,
+            request.video_data_base64,
+        ) as video_path:
+            return run_video_inference(
+                video_path=video_path,
+                enrollment_dir=Path(request.enrollment_dir),
+                config=config,
+                analysis=analysis,
+                gallery=load_enrollment_gallery(
+                    analysis,
+                    Path(request.enrollment_dir),
+                    config,
+                    enrollment_settings,
+                ),
+            )
     except (OSError, RuntimeError, ValueError) as error:
         return InferenceResponse(
             schema_version="1.0",
@@ -123,7 +129,7 @@ def refresh_enrollment() -> EnrollmentRefreshResponse:
 
 
 def server_config() -> tuple[str, int]:
-    host = os.getenv("HOST", "127.0.0.1")
+    host = os.getenv("HOST") or "0.0.0.0"
     try:
         port = int(os.getenv("PORT", "8000"))
     except ValueError as error:

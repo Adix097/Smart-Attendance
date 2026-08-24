@@ -71,11 +71,23 @@ class MockAttendanceRepository implements AttendanceRepository {
     ]));
   }
 
+  /**
+   * A two-hour window that has already ended, expressed relative to now so the
+   * suite does not depend on the wall clock. Individual tests move the window to
+   * exercise upcoming and active classes.
+   */
+  contextStart = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  contextEnd = new Date(Date.now() - 60 * 60 * 1000);
+  contextMissing = false;
+
   getAttendanceContext(): Promise<AttendanceContext | null> {
+    if (this.contextMissing) return Promise.resolve(null);
     return Promise.resolve({
-      scheduledStart: '2026-08-24T11:00:00.000Z',
-      scheduledEnd: '2026-08-24T13:00:00.000Z',
-      entryDeadline: '2026-08-24T11:15:00.000Z',
+      scheduledStart: this.contextStart.toISOString(),
+      scheduledEnd: this.contextEnd.toISOString(),
+      entryDeadline: new Date(
+        this.contextStart.getTime() + 15 * 60 * 1000,
+      ).toISOString(),
     });
   }
 
@@ -492,6 +504,132 @@ describe('attendance session API', () => {
     assert.equal(response.status, 200);
     assert.equal(body.record.status, 'present');
     assert.equal(body.record.finalizedBy, 'faculty-demo');
+  });
+
+  it('forwards an uploaded recording as bytes rather than a backend file path', async () => {
+    await stopBackend();
+    repository = new MockAttendanceRepository();
+    const session = await repository.createAttendanceSession({
+      id: 'upload-session',
+      classSessionId: 'class-1',
+    });
+    let forwarded: AIInferenceRequest | null = null;
+    await startBackend(async (aiRequest) => {
+      forwarded = aiRequest;
+      return inferenceResponse;
+    });
+
+    const response = await postJson(`/api/attendance-sessions/${session.id}/process`, {
+      video_filename: 'classroom.mp4',
+      video_data_base64: Buffer.from('demo-video').toString('base64'),
+    });
+
+    assert.equal(response.status, 200);
+    assert(forwarded);
+    const sent = forwarded as AIInferenceRequest;
+    assert.equal(sent.video_path, undefined);
+    assert.equal(sent.video_filename, 'classroom.mp4');
+    assert.equal(sent.video_data_base64, Buffer.from('demo-video').toString('base64'));
+  });
+
+  it('rejects an unsupported upload format without calling the AI service', async () => {
+    await stopBackend();
+    repository = new MockAttendanceRepository();
+    const session = await repository.createAttendanceSession({
+      id: 'bad-format-session',
+      classSessionId: 'class-1',
+    });
+    let called = false;
+    await startBackend(async () => {
+      called = true;
+      return inferenceResponse;
+    });
+
+    const response = await postJson(`/api/attendance-sessions/${session.id}/process`, {
+      video_filename: 'classroom.txt',
+      video_data_base64: Buffer.from('demo-video').toString('base64'),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 400);
+    assert.equal(called, false);
+    assert.equal(body.error.code, 'INVALID_REQUEST');
+    assert.match(body.error.message, /Unsupported video format/);
+    assert.equal(repository.sessions.get(session.id)?.status, 'open');
+  });
+
+  it('refuses to process a class that has not started and leaves it pending', async () => {
+    await stopBackend();
+    repository = new MockAttendanceRepository();
+    repository.contextStart = new Date(Date.now() + 60 * 60 * 1000);
+    repository.contextEnd = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    const session = await repository.createAttendanceSession({
+      id: 'upcoming-session',
+      classSessionId: 'class-1',
+    });
+    let called = false;
+    await startBackend(async () => {
+      called = true;
+      return inferenceResponse;
+    });
+
+    const response = await postJson(`/api/attendance-sessions/${session.id}/process`, {
+      video_path: 'C:\\demo\\classroom.mp4',
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 409);
+    assert.equal(body.error.code, 'SESSION_NOT_STARTED');
+    assert.match(body.error.message, /has not started yet/);
+    assert.equal(body.error.scheduled_start, repository.contextStart.toISOString());
+    assert.equal(body.error.time_zone, 'Asia/Kolkata');
+    assert.equal(called, false, 'no inference may be attempted before the class starts');
+    assert.equal(body.session.status, 'pending');
+    assert.equal(repository.sessions.get(session.id)?.status, 'open');
+  });
+
+  it('processes a class that is currently running', async () => {
+    await stopBackend();
+    repository = new MockAttendanceRepository();
+    repository.contextStart = new Date(Date.now() - 30 * 60 * 1000);
+    repository.contextEnd = new Date(Date.now() + 30 * 60 * 1000);
+    const session = await repository.createAttendanceSession({
+      id: 'active-session',
+      classSessionId: 'class-1',
+    });
+    await startBackend(async () => inferenceResponse);
+
+    const response = await postJson(`/api/attendance-sessions/${session.id}/process`, {
+      video_path: 'C:\\demo\\classroom.mp4',
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.session.status, 'completed');
+  });
+
+  it('reports a missing scheduled window without attempting inference', async () => {
+    await stopBackend();
+    repository = new MockAttendanceRepository();
+    repository.contextMissing = true;
+    const session = await repository.createAttendanceSession({
+      id: 'no-context-session',
+      classSessionId: 'class-1',
+    });
+    let called = false;
+    await startBackend(async () => {
+      called = true;
+      return inferenceResponse;
+    });
+
+    const response = await postJson(`/api/attendance-sessions/${session.id}/process`, {
+      video_path: 'C:\\demo\\classroom.mp4',
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 409);
+    assert.equal(body.error.code, 'ATTENDANCE_CONTEXT_MISSING');
+    assert.equal(called, false);
   });
 
   it('marks the session failed when the AI service fails', async () => {

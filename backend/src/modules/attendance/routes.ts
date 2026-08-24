@@ -1,6 +1,4 @@
 import crypto from 'node:crypto';
-import { unlink, writeFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 
 import { Router, type Response } from 'express';
@@ -19,6 +17,7 @@ import type {
   EnrolledStudent,
 } from './types.js';
 import { config } from '../../config.js';
+import { occurrenceStatus } from './schedule.js';
 import {
   calculateOccupancy,
   defaultVerificationConfig,
@@ -28,6 +27,7 @@ import {
 
 type InferenceHandler = (
   request: AIInferenceRequest,
+  options?: { logContext?: Record<string, string | number | boolean | null> },
 ) => Promise<AIInferenceResponse>;
 
 export interface AttendanceRouteDependencies {
@@ -133,23 +133,31 @@ function sendError(
   response.status(statusCode).json({ error: { code, message } });
 }
 
-/** Decodes an uploaded recording to a temporary file and returns its path. */
-async function writeTemporaryVideo(
-  filename: string,
-  base64Data: string,
-): Promise<string> {
+/**
+ * Chooses how the recording reaches the AI service.
+ *
+ * The AI service runs as its own deployment with its own filesystem, so an
+ * uploaded recording must travel in the request body. A caller-supplied
+ * video_path is only meaningful when both processes share a host, so it is
+ * forwarded untouched for local runs and the development harness.
+ */
+function videoRequestFields(
+  body: ProcessRequest,
+): Pick<AIInferenceRequest, 'video_path' | 'video_filename' | 'video_data_base64'> {
+  if (isNonEmptyString(body.video_path)) {
+    return { video_path: body.video_path };
+  }
+  const filename = body.video_filename ?? '';
   const extension = path.extname(filename).toLowerCase();
   if (!supportedVideoExtensions.includes(extension)) {
-    throw new Error('Unsupported video format');
+    throw new Error(
+      `Unsupported video format: ${extension || filename}. Supported formats: ${supportedVideoExtensions.join(', ')}`,
+    );
   }
-  const data = Buffer.from(base64Data, 'base64');
-  if (data.length === 0) throw new Error('The video file is empty');
-  const videoPath = path.join(
-    os.tmpdir(),
-    `smart-attendance-${crypto.randomUUID()}${extension}`,
-  );
-  await writeFile(videoPath, data, { flag: 'wx' });
-  return videoPath;
+  return {
+    video_filename: filename,
+    video_data_base64: body.video_data_base64 ?? '',
+  };
 }
 
 function resolveSightings(
@@ -298,6 +306,50 @@ export function createAttendanceRouter({
       return;
     }
 
+    // Timing is resolved before any state changes so an upcoming class is
+    // rejected explicitly instead of being reported as an AI failure.
+    const context = await repository.getAttendanceContext(session.id);
+    if (!context) {
+      sendError(
+        response,
+        409,
+        'ATTENDANCE_CONTEXT_MISSING',
+        'The attendance session has no scheduled window recorded',
+      );
+      return;
+    }
+    const scheduledStart = new Date(context.scheduledStart);
+    const scheduledEnd = new Date(context.scheduledEnd);
+    const timing = occurrenceStatus(scheduledStart, scheduledEnd, new Date());
+
+    if (timing === 'upcoming') {
+      response.status(409).json({
+        error: {
+          code: 'SESSION_NOT_STARTED',
+          message:
+            'This class has not started yet. Processing is unavailable until the scheduled start, and no recognition was attempted.',
+          scheduled_start: context.scheduledStart,
+          scheduled_end: context.scheduledEnd,
+          time_zone: config.timeZone,
+        },
+        session: sessionResponse(session),
+      });
+      return;
+    }
+
+    let videoFields: ReturnType<typeof videoRequestFields>;
+    try {
+      videoFields = videoRequestFields(request.body);
+    } catch (error) {
+      sendError(
+        response,
+        400,
+        'INVALID_REQUEST',
+        error instanceof Error ? error.message : 'The uploaded video is not usable',
+      );
+      return;
+    }
+
     const expectedStudents = await repository.getExpectedStudents(session.id);
     if (expectedStudents.length === 0) {
       sendError(
@@ -313,35 +365,29 @@ export function createAttendanceRouter({
 
     await repository.updateAttendanceSessionStatus(session.id, 'processing', null);
 
-    let temporaryVideoPath: string | null = null;
     try {
-      let videoPath = request.body.video_path;
-      if (!videoPath) {
-        temporaryVideoPath = await writeTemporaryVideo(
-          request.body.video_filename ?? '',
-          request.body.video_data_base64 ?? '',
-        );
-        videoPath = temporaryVideoPath;
-      }
-      const inference = await inferenceHandler({
-        video_path: videoPath,
-        enrollment_dir: config.enrollmentRoot,
-        model_name: request.body.model_name,
-        provider: request.body.provider,
-        sampling_fps: request.body.sampling_fps,
-        acceptance_threshold: request.body.acceptance_threshold,
-        unknown_threshold: request.body.unknown_threshold,
-        identity_margin_threshold: request.body.identity_margin_threshold,
-        minimum_observations: request.body.minimum_observations,
-      });
+      const inference = await inferenceHandler(
+        {
+          ...videoFields,
+          enrollment_dir: config.enrollmentRoot,
+          model_name: request.body.model_name,
+          provider: request.body.provider,
+          sampling_fps: request.body.sampling_fps,
+          acceptance_threshold: request.body.acceptance_threshold,
+          unknown_threshold: request.body.unknown_threshold,
+          identity_margin_threshold: request.body.identity_margin_threshold,
+          minimum_observations: request.body.minimum_observations,
+        },
+        {
+          logContext: {
+            attendance_session_id: session.id,
+            session_timing: timing,
+          },
+        },
+      );
       if (inference.errors.length > 0) {
         throw new Error(inference.errors.join('; '));
       }
-
-      const context = await repository.getAttendanceContext(session.id);
-      if (!context) throw new Error('Attendance context is missing');
-      const scheduledStart = new Date(context.scheduledStart);
-      const scheduledEnd = new Date(context.scheduledEnd);
 
       const sightings = resolveSightings(
         inference,
@@ -450,11 +496,29 @@ export function createAttendanceRouter({
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'Inference processing failed';
+      const code =
+        error instanceof AIServiceError ? error.code : 'INFERENCE_FAILED';
+      // The client only receives the sanitized message; the diagnostic context
+      // that identifies the session and its timing stays in the backend log.
+      console.error(
+        `[attendance] ${JSON.stringify({
+          attendance_session_id: session.id,
+          class_session_id: session.classSessionId,
+          session_timing: timing,
+          scheduled_start: context.scheduledStart,
+          scheduled_end: context.scheduledEnd,
+          time_zone: config.timeZone,
+          code,
+          status: error instanceof AIServiceError ? error.statusCode ?? null : null,
+          message,
+        })}`,
+      );
       await repository.updateAttendanceSessionStatus(session.id, 'failed', message);
       response.status(502).json({
         error: {
-          code: error instanceof AIServiceError ? error.code : 'INFERENCE_FAILED',
+          code,
           message,
+          retryable: error instanceof AIServiceError ? error.retryable : false,
         },
         session: sessionResponse({
           ...session,
@@ -462,8 +526,6 @@ export function createAttendanceRouter({
           processingError: message,
         }),
       });
-    } finally {
-      if (temporaryVideoPath) await unlink(temporaryVideoPath).catch(() => undefined);
     }
   });
 
