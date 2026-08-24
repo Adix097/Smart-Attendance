@@ -17,6 +17,9 @@ import type {
   AttendanceSessionDatabaseStatus,
   AttendanceContext,
   AttendanceSightingInput,
+  ClassroomOccurrence,
+  ClassroomOption,
+  ClassroomTimetableEntry,
   ClassSessionOption,
   CreateAttendanceSessionInput,
   FinalizeAttendanceInput,
@@ -94,13 +97,18 @@ class MockAttendanceRepository implements AttendanceRepository {
     return Promise.resolve();
   }
 
-  getClassSessionOptions(): Promise<ClassSessionOption[]> {
+  lastClassroomFilter: string | undefined;
+
+  getClassSessionOptions(classroomId?: string): Promise<ClassSessionOption[]> {
+    this.lastClassroomFilter = classroomId;
     return Promise.resolve([{
       id: 'class-1',
+      classroomId: 'room-1',
       courseCode: 'ARD253',
       courseTitle: 'Computer Networking (Lab)',
-      facultyName: 'Mr. Anuj Kumar',
-      classroomName: 'AUB-03-Com Lab',
+      facultyName: 'Dalal Dr. Renu',
+      className: 'AIDS-III',
+      classroomName: 'A-204',
       scheduledStart: '2026-08-24T11:00:00.000Z',
       scheduledEnd: '2026-08-24T13:00:00.000Z',
       students: [{
@@ -111,6 +119,40 @@ class MockAttendanceRepository implements AttendanceRepository {
         group: 'B',
       }],
     }]);
+  }
+
+  getClassrooms(): Promise<ClassroomOption[]> {
+    return Promise.resolve([{ id: 'room-1', name: 'A-204' }]);
+  }
+
+  classroomExists(classroomId: string): Promise<boolean> {
+    return Promise.resolve(classroomId === 'room-1');
+  }
+
+  getClassroomTimetable(): Promise<ClassroomTimetableEntry[]> {
+    return Promise.resolve([
+      {
+        id: 'entry-1',
+        courseCode: 'ARD253',
+        courseName: 'Computer Networking (Lab)',
+        facultyName: 'Dalal Dr. Renu',
+        className: 'AIDS-III',
+        batch: 'BI B',
+        startTime: '10:00',
+        endTime: '11:00',
+        weekday: 'Monday',
+        room: 'A-204',
+      },
+    ]);
+  }
+
+  getClassroomOccurrence(): Promise<ClassroomOccurrence | null> {
+    return Promise.resolve({
+      entryId: 'entry-1',
+      status: 'active',
+      scheduledStart: '2026-08-24T04:30:00.000Z',
+      scheduledEnd: '2026-08-24T05:30:00.000Z',
+    });
   }
 
   createAttendanceSession(input: CreateAttendanceSessionInput): Promise<AttendanceSession> {
@@ -334,6 +376,44 @@ describe('attendance session API', () => {
     assert.equal(response.status, 200);
     assert.equal(body.classes[0].courseCode, 'ARD253');
     assert.equal(body.classes[0].students[0].studentNumber, '14119051925');
+  });
+
+  it('lists the classrooms that have a timetable', async () => {
+    const response = await request('/api/classrooms');
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(body.classrooms, [{ id: 'room-1', name: 'A-204' }]);
+  });
+
+  it('returns a room timetable with its active occurrence', async () => {
+    const response = await request('/api/classrooms/room-1/timetable');
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.timetable.length, 1);
+    assert.equal(body.timetable[0].room, 'A-204');
+    assert.equal(body.timetable[0].className, 'AIDS-III');
+    assert.equal(body.timetable[0].batch, 'BI B');
+    assert.equal(body.timetable[0].weekday, 'Monday');
+    assert.equal(body.occurrence.entryId, 'entry-1');
+    assert.equal(body.occurrence.status, 'active');
+    assert.equal(body.timeZone, 'Asia/Kolkata');
+  });
+
+  it('rejects a timetable request for an unknown classroom', async () => {
+    const response = await request('/api/classrooms/does-not-exist/timetable');
+    const body = await response.json();
+
+    assert.equal(response.status, 404);
+    assert.equal(body.error.code, 'CLASSROOM_NOT_FOUND');
+  });
+
+  it('passes a classroom filter through to the class-session lookup', async () => {
+    const response = await request('/api/attendance-classes?classroom_id=room-1');
+
+    assert.equal(response.status, 200);
+    assert.equal(repository.lastClassroomFilter, 'room-1');
   });
 
   it('creates a session for an existing class session', async () => {

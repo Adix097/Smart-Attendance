@@ -1,4 +1,5 @@
 import type { AttendanceSession, ClassSessionOption } from '../../api/types';
+import LiveClock from '../timetable/LiveClock';
 
 const statusLabels = {
   pending: 'Pending',
@@ -34,6 +35,9 @@ export default function SessionHeader({
         <h1 className="mt-1 text-3xl font-bold tracking-tight">
           {selectedClass?.courseTitle ?? 'Smart Classroom Attendance'}
         </h1>
+        <div className="mt-2">
+          <LiveClock />
+        </div>
       </div>
 
       <div className="grid justify-items-start gap-2 sm:justify-items-end">

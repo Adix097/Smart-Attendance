@@ -7,6 +7,9 @@ import type {
   AttendanceSession,
   AttendanceContext,
   AttendanceSightingInput,
+  ClassroomOccurrence,
+  ClassroomOption,
+  ClassroomTimetableEntry,
   ClassSessionOption,
   CreateAttendanceSessionInput,
   EnrolledStudent,
@@ -261,17 +264,26 @@ export class PgAttendanceRepository implements AttendanceRepository {
 
   async ensureUpcomingClassSession(): Promise<void> {
     const result = await this.database.query(
-      `SELECT te.id, te.course_id, te.faculty_id, te.room,
+      `SELECT te.id, te.course_id, te.faculty_id, te.classroom_id, te.room,
               te.day_of_week, te.start_time, te.end_time
        FROM timetable_entries te
        ORDER BY te.id`,
     );
     if (result.rows.length === 0) return;
 
+    // Each room is considered separately so that selecting a room always offers
+    // its own current or next class, even while another room is mid-session.
+    const byClassroom = new Map<string, TimetableOccurrenceRow[]>();
+    for (const row of result.rows as TimetableOccurrenceRow[]) {
+      const key = (row.classroom_id as string | null) ?? '';
+      const group = byClassroom.get(key);
+      if (group) group.push(row);
+      else byClassroom.set(key, [row]);
+    }
+
     const now = new Date();
-    const selected = selectRelevantOccurrences(
-      timetableOccurrences(result.rows as TimetableOccurrenceRow[], now, config.timeZone),
-      now,
+    const selected = [...byClassroom.values()].flatMap((rows) =>
+      selectRelevantOccurrences(timetableOccurrences(rows, now, config.timeZone), now),
     );
     for (const occurrence of selected) {
       await this.database.query(
@@ -279,7 +291,7 @@ export class PgAttendanceRepository implements AttendanceRepository {
          id, timetable_entry_id, course_id, faculty_id, classroom_id,
          scheduled_start, scheduled_end
        )
-       VALUES ($1, $2, $3, $4, NULL, $5, $6)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (timetable_entry_id, scheduled_start)
        WHERE timetable_entry_id IS NOT NULL DO NOTHING`,
         [
@@ -287,6 +299,7 @@ export class PgAttendanceRepository implements AttendanceRepository {
           occurrence.row.id,
           occurrence.row.course_id,
           occurrence.row.faculty_id,
+          occurrence.row.classroom_id,
           occurrence.start.toISOString(),
           occurrence.end.toISOString(),
         ],
@@ -294,28 +307,103 @@ export class PgAttendanceRepository implements AttendanceRepository {
     }
   }
 
-  async getClassSessionOptions(): Promise<ClassSessionOption[]> {
+  async getClassrooms(): Promise<ClassroomOption[]> {
     const result = await this.database.query(
-      `SELECT cs.id, cs.course_id, c.code, c.title, f.name AS faculty_name,
-              te.batch,
+      `SELECT c.id, c.name
+       FROM classrooms c
+       WHERE EXISTS (
+         SELECT 1 FROM timetable_entries te
+         WHERE te.classroom_id = c.id
+       )
+       ORDER BY c.name`,
+    );
+    return result.rows.map((row) => ({
+      id: row.id as string,
+      name: row.name as string,
+    }));
+  }
+
+  async classroomExists(classroomId: string): Promise<boolean> {
+    const result = await this.database.query('SELECT 1 FROM classrooms WHERE id = $1', [
+      classroomId,
+    ]);
+    return Boolean(result.rowCount);
+  }
+
+  async getClassroomTimetable(classroomId: string): Promise<ClassroomTimetableEntry[]> {
+    const result = await this.database.query(
+      `SELECT te.id, c.code, c.title,
+              COALESCE(f.name, te.faculty_name) AS faculty_name,
+              te.class_name, te.batch, te.start_time, te.end_time,
+              te.day_of_week, te.room
+       FROM timetable_entries te
+       JOIN courses c ON c.id = te.course_id
+       LEFT JOIN faculty f ON f.id = te.faculty_id
+       WHERE te.classroom_id = $1
+       ORDER BY array_position(
+                  ARRAY['Monday','Tuesday','Wednesday','Thursday','Friday'],
+                  te.day_of_week
+                ),
+                te.start_time, c.code`,
+      [classroomId],
+    );
+    return result.rows.map((row) => ({
+      id: row.id as string,
+      courseCode: row.code as string,
+      courseName: row.title as string,
+      facultyName: row.faculty_name as string,
+      className: row.class_name as string | null,
+      batch: row.batch as string,
+      startTime: String(row.start_time).slice(0, 5),
+      endTime: String(row.end_time).slice(0, 5),
+      weekday: row.day_of_week as string,
+      room: row.room as string,
+    }));
+  }
+
+  async getClassroomOccurrence(classroomId: string): Promise<ClassroomOccurrence | null> {
+    const result = await this.database.query(
+      `SELECT te.id, te.day_of_week, te.start_time, te.end_time
+       FROM timetable_entries te
+       WHERE te.classroom_id = $1`,
+      [classroomId],
+    );
+    if (result.rows.length === 0) return null;
+
+    const now = new Date();
+    const [occurrence] = selectRelevantOccurrences(
+      timetableOccurrences(result.rows as TimetableOccurrenceRow[], now, config.timeZone),
+      now,
+    );
+    if (!occurrence) return null;
+    return {
+      entryId: occurrence.row.id,
+      status: occurrenceStatus(occurrence.start, occurrence.end, now),
+      scheduledStart: occurrence.start.toISOString(),
+      scheduledEnd: occurrence.end.toISOString(),
+    };
+  }
+
+  async getClassSessionOptions(classroomId?: string): Promise<ClassSessionOption[]> {
+    const params: unknown[] = [];
+    const classroomFilter = classroomId
+      ? `WHERE COALESCE(cs.classroom_id, te.classroom_id) = $1`
+      : '';
+    if (classroomId) params.push(classroomId);
+    const result = await this.database.query(
+      `SELECT cs.id, cs.course_id, COALESCE(cs.classroom_id, te.classroom_id) AS classroom_id,
+              c.code, c.title, f.name AS faculty_name,
+              te.batch, te.class_name,
               COALESCE(cl.name, te.room) AS classroom_name,
               cs.scheduled_start, cs.scheduled_end
        FROM class_sessions cs
        JOIN courses c ON c.id = cs.course_id
        JOIN faculty f ON f.id = cs.faculty_id
        JOIN timetable_entries te ON te.id = cs.timetable_entry_id
-       LEFT JOIN classrooms cl ON cl.id = cs.classroom_id
-       WHERE EXISTS (
-         SELECT 1
-         FROM students s
-         WHERE te.batch = 'ALL'
-            OR s.student_group = te.batch
-            OR EXISTS (
-              SELECT 1 FROM enrollments e
-              WHERE e.course_id = cs.course_id AND e.student_id = s.id
-            )
-       )
+       LEFT JOIN classrooms cl ON cl.id = COALESCE(cs.classroom_id, te.classroom_id)
+       ${classroomFilter}
        ORDER BY cs.scheduled_start, c.code`,
+      params,
     );
     const now = new Date();
     const active = result.rows.filter(
@@ -337,9 +425,11 @@ export class PgAttendanceRepository implements AttendanceRepository {
       options.push({
         id: row.id as string,
         courseId: row.course_id as string,
+        classroomId: row.classroom_id as string,
         courseCode: row.code as string,
         courseTitle: row.title as string,
         facultyName: row.faculty_name as string,
+        className: row.class_name as string | null,
         classroomName: row.classroom_name as string,
         scheduledStart: (row.scheduled_start as Date).toISOString(),
         scheduledEnd: (row.scheduled_end as Date).toISOString(),

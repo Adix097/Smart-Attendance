@@ -7,7 +7,7 @@
     "build": "tsc",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit && tsc -p tsconfig.tests.json",
     "test": "tsx --test tests/*.test.ts",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:import-data": "tsx src/db/import-data-cli.ts",

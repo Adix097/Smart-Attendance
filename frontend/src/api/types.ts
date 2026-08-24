@@ -17,18 +17,55 @@ export interface EnrolledStudent {
   group: string | null;
 }
 
+export type OccurrenceStatus = 'upcoming' | 'active' | 'ended';
+
 export interface ClassSessionOption {
   id: string;
   courseId?: string;
+  classroomId?: string;
   courseCode: string;
   courseTitle: string;
   facultyName: string;
+  className?: string | null;
   classroomName: string;
   scheduledStart: string;
   scheduledEnd: string;
-  status?: 'upcoming' | 'active' | 'ended';
+  status?: OccurrenceStatus;
   batch?: string | null;
   students: EnrolledStudent[];
+}
+
+export interface Classroom {
+  id: string;
+  name: string;
+}
+
+export interface TimetableEntry {
+  id: string;
+  courseCode: string;
+  courseName: string;
+  facultyName: string;
+  className: string | null;
+  batch: string;
+  startTime: string;
+  endTime: string;
+  weekday: string;
+  room: string;
+}
+
+/** The class running now in a room, or the next one if the room is free. */
+export interface ClassroomOccurrence {
+  entryId: string;
+  status: OccurrenceStatus;
+  scheduledStart: string;
+  scheduledEnd: string;
+}
+
+export interface ClassroomTimetable {
+  timetable: TimetableEntry[];
+  occurrence: ClassroomOccurrence | null;
+  now: string;
+  timeZone: string;
 }
 
 export interface AttendanceObservation {

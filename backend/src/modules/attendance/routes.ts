@@ -233,9 +233,31 @@ export function createAttendanceRouter({
     return session;
   }
 
-  router.get('/attendance-classes', async (_request, response) => {
+  router.get('/attendance-classes', async (request, response) => {
+    const classroomId =
+      typeof request.query.classroom_id === 'string'
+        ? request.query.classroom_id
+        : undefined;
     await repository.ensureUpcomingClassSession();
-    response.json({ classes: await repository.getClassSessionOptions() });
+    response.json({ classes: await repository.getClassSessionOptions(classroomId) });
+  });
+
+  router.get('/classrooms', async (_request, response) => {
+    response.json({ classrooms: await repository.getClassrooms() });
+  });
+
+  router.get('/classrooms/:id/timetable', async (request, response) => {
+    const classroomId = request.params.id;
+    if (!(await repository.classroomExists(classroomId))) {
+      sendError(response, 404, 'CLASSROOM_NOT_FOUND', 'Classroom not found');
+      return;
+    }
+    response.json({
+      timetable: await repository.getClassroomTimetable(classroomId),
+      occurrence: await repository.getClassroomOccurrence(classroomId),
+      now: new Date().toISOString(),
+      timeZone: config.timeZone,
+    });
   });
 
   router.post('/attendance-sessions', async (request, response) => {

@@ -1,19 +1,43 @@
+import { useEffect, useState } from 'react';
+
 import AttendanceTable from '../components/attendance/AttendanceTable';
 import ClassSelector from '../components/attendance/ClassSelector';
 import EvidenceSummary from '../components/attendance/EvidenceSummary';
 import ReviewActions from '../components/attendance/ReviewActions';
 import SessionHeader from '../components/attendance/SessionHeader';
 import SessionStatus from '../components/attendance/SessionStatus';
+import ClassroomSelector from '../components/timetable/ClassroomSelector';
+import { getClassrooms } from '../api/timetable';
+import type { Classroom } from '../api/types';
 import useAttendance from '../hooks/useAttendance';
 import useClassSessions from '../hooks/useClassSessions';
 
 export default function AttendancePage() {
-  const classSessions = useClassSessions();
+  const [classrooms, setClassrooms] = useState<Classroom[]>([]);
+  const [classroomId, setClassroomId] = useState('');
+  const [classroomError, setClassroomError] = useState('');
+
+  const classSessions = useClassSessions(classroomId || undefined);
   const attendance = useAttendance(classSessions.selectedClassId);
   const students = classSessions.selectedClass?.students ?? [];
 
+  useEffect(() => {
+    getClassrooms()
+      .then(({ classrooms: rooms }) => setClassrooms(rooms))
+      .catch((cause) =>
+        setClassroomError(
+          cause instanceof Error ? cause.message : 'Unable to load classrooms',
+        ),
+      );
+  }, []);
+
   const selectClass = (id: string) => {
     classSessions.setSelectedClassId(id);
+    attendance.resetEvidence();
+  };
+
+  const selectClassroom = (id: string) => {
+    setClassroomId(id);
     attendance.resetEvidence();
   };
 
@@ -25,6 +49,16 @@ export default function AttendancePage() {
         busy={attendance.busy}
         onCreate={attendance.createSession}
       />
+      <section className="my-4 flex flex-wrap items-end justify-between gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <ClassroomSelector
+          classrooms={classrooms}
+          selectedClassroomId={classroomId}
+          onSelect={selectClassroom}
+        />
+        <a className="text-sm font-semibold text-blue-700 hover:underline" href="/timetable">
+          View room timetable
+        </a>
+      </section>
       <ClassSelector
         classes={classSessions.classes}
         selectedClassId={classSessions.selectedClassId}
@@ -33,7 +67,7 @@ export default function AttendancePage() {
         onSelect={selectClass}
       />
       <SessionStatus
-        error={classSessions.error || attendance.error}
+        error={classroomError || classSessions.error || attendance.error}
         session={attendance.session}
       />
       <ReviewActions

@@ -1,8 +1,12 @@
 import AttendancePage from './pages/AttendancePage';
+import ClassroomTimetablePage from './pages/ClassroomTimetablePage';
 import HomePage from './pages/HomePage';
 
 function App() {
-  return window.location.pathname === '/attendance' ? <AttendancePage /> : <HomePage />;
+  const { pathname } = window.location;
+  if (pathname === '/attendance') return <AttendancePage />;
+  if (pathname === '/timetable') return <ClassroomTimetablePage />;
+  return <HomePage />;
 }
 
 export default App;

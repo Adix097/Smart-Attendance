@@ -11,12 +11,20 @@ export default function HomePage() {
         <p className="mb-8 text-lg text-slate-600">
           Review provisional AI recognition evidence before finalizing attendance.
         </p>
-        <a
-          className="inline-block rounded-lg bg-blue-700 px-4 py-3 font-medium text-white hover:bg-blue-800"
-          href="/attendance"
-        >
-          Open attendance workflow
-        </a>
+        <div className="flex flex-wrap gap-3">
+          <a
+            className="inline-block rounded-lg bg-blue-700 px-4 py-3 font-medium text-white hover:bg-blue-800"
+            href="/attendance"
+          >
+            Open attendance workflow
+          </a>
+          <a
+            className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-3 font-medium text-slate-900 hover:bg-slate-50"
+            href="/timetable"
+          >
+            Browse classroom timetables
+          </a>
+        </div>
       </section>
     </main>
   );

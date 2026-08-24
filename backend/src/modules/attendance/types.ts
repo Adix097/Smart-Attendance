@@ -36,15 +36,43 @@ export interface EnrolledStudent {
 export interface ClassSessionOption {
   id: string;
   courseId?: string;
+  classroomId?: string;
   courseCode: string;
   courseTitle: string;
   facultyName: string;
+  className?: string | null;
   classroomName: string;
   scheduledStart: string;
   scheduledEnd: string;
   status?: 'upcoming' | 'active' | 'ended';
   batch?: string | null;
   students: EnrolledStudent[];
+}
+
+export interface ClassroomOption {
+  id: string;
+  name: string;
+}
+
+export interface ClassroomTimetableEntry {
+  id: string;
+  courseCode: string;
+  courseName: string;
+  facultyName: string;
+  className: string | null;
+  batch: string;
+  startTime: string;
+  endTime: string;
+  weekday: string;
+  room: string;
+}
+
+/** The active class in a room, or the next one if none is running. */
+export interface ClassroomOccurrence {
+  entryId: string;
+  status: 'active' | 'upcoming' | 'ended';
+  scheduledStart: string;
+  scheduledEnd: string;
 }
 
 export interface AIObservationInput {
@@ -116,7 +144,11 @@ export interface FinalizeAttendanceInput {
 export interface AttendanceRepository {
   classSessionExists(classSessionId: string): Promise<boolean>;
   ensureUpcomingClassSession(): Promise<void>;
-  getClassSessionOptions(): Promise<ClassSessionOption[]>;
+  getClassSessionOptions(classroomId?: string): Promise<ClassSessionOption[]>;
+  getClassrooms(): Promise<ClassroomOption[]>;
+  classroomExists(classroomId: string): Promise<boolean>;
+  getClassroomTimetable(classroomId: string): Promise<ClassroomTimetableEntry[]>;
+  getClassroomOccurrence(classroomId: string): Promise<ClassroomOccurrence | null>;
   getEnrolledStudents(classSessionId: string): Promise<EnrolledStudent[]>;
   createAttendanceContext(
     attendanceSessionId: string,

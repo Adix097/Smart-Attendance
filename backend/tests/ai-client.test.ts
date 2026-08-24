@@ -37,7 +37,10 @@ describe('AI service client', () => {
       fetchImpl: async (input, init) => {
         assert.equal(input, 'http://127.0.0.1:8000/v1/inference');
         assert.equal(init?.method, 'POST');
-        assert.equal(init?.headers?.['content-type'], 'application/json');
+        assert.equal(
+          new Headers(init?.headers).get('content-type'),
+          'application/json',
+        );
         assert.equal(init?.body, JSON.stringify(request));
         return new Response(JSON.stringify(responseBody), { status: 200 });
       },

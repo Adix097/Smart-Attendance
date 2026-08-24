@@ -3,16 +3,21 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { Pool } from 'pg';
 
-const requiredCourseColumns = ['course_code', 'course_name'];
-const requiredTimetableColumns = [
-  'day',
+// The room files declare a course_name column in the header but do not supply a
+// value for it, so a data row is either the full 8 fields or 7 without the name.
+const timetableColumnsWithName = [
+  'course_code',
+  'course_name',
+  'faculty_name',
+  'weekday',
   'start_time',
   'end_time',
-  'course_code',
+  'class',
   'batch',
-  'faculty_name',
-  'room',
 ];
+const timetableColumnsWithoutName = timetableColumnsWithName.filter(
+  (column) => column !== 'course_name',
+);
 const validDays = new Set([
   'Monday',
   'Tuesday',
@@ -21,11 +26,10 @@ const validDays = new Set([
   'Friday',
 ]);
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
-const validBatches = new Set(['A', 'B', 'ALL']);
 
 export interface CourseRow {
   courseCode: string;
-  courseName: string;
+  courseName: string | null;
 }
 
 export interface FacultyRow {
@@ -41,11 +45,15 @@ export interface StudentRow {
 }
 
 export interface TimetableRow {
+  sourceFile: string;
+  sourceLine: number;
   day: string;
   startTime: string;
   endTime: string;
   courseCode: string;
-  batch: 'A' | 'B' | 'ALL';
+  courseName: string | null;
+  className: string;
+  batch: string;
   facultyName: string;
   room: string;
 }
@@ -53,23 +61,13 @@ export interface TimetableRow {
 export interface ImportSummary {
   facultyImported: number;
   coursesImported: number;
+  classroomsImported: number;
   timetableEntriesImported: number;
-  timetableEntriesLinked: number;
   studentsImported: number;
+  duplicateRowsSkipped: number;
 }
 
-const facultyNameAliases: Record<string, string> = {
-  'Kumar Mr. Anuj': 'Mr. Anuj Kumar',
-  'Arora Dr. Amar': 'Dr. Amar Arora',
-  'Jindal Ms. Kanika': 'Ms. Kanika Jindal',
-  'Tripathi Dr. Atul': 'Dr. Atul Tripathi',
-  'Priya Dr. Annu': 'Dr. Annu Priya',
-  'Dalal Dr. Renu': 'Dr. Renu Dalal',
-  'Sehgal Dr. Ruchika': 'Dr. Ruchika Sehgal',
-  'Aggarwal Prof. Abha': 'Prof. Abha Aggarwal',
-};
-
-function parseCsv(content: string, fileName: string): Record<string, string>[] {
+function parseCsvRows(content: string, fileName: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';
@@ -100,8 +98,12 @@ function parseCsv(content: string, fileName: string): Record<string, string>[] {
   row.push(field);
   if (row.some((value) => value.trim() !== '')) rows.push(row);
   if (rows.length === 0) throw new Error(`${fileName}: file is empty`);
+  return rows.map((values) => values.map((value) => value.trim()));
+}
 
-  const headers = rows[0].map((header) => header.trim());
+function parseCsv(content: string, fileName: string): Record<string, string>[] {
+  const rows = parseCsvRows(content, fileName);
+  const headers = rows[0];
   const duplicates = headers.filter(
     (header, index) => headers.indexOf(header) !== index,
   );
@@ -115,9 +117,7 @@ function parseCsv(content: string, fileName: string): Record<string, string>[] {
         `${fileName}: row ${rowIndex + 2} has ${values.length} fields; expected ${headers.length}`,
       );
     }
-    return Object.fromEntries(
-      headers.map((header, index) => [header, values[index].trim()]),
-    );
+    return Object.fromEntries(headers.map((header, index) => [header, values[index]]));
   });
 }
 
@@ -131,43 +131,6 @@ function requireColumns(
   if (missing.length > 0) {
     throw new Error(`${fileName}: missing required columns: ${missing.join(', ')}`);
   }
-}
-
-export function parseCourses(content: string): CourseRow[] {
-  const fileName = 'courses.csv';
-  const rows = parseCsv(content, fileName);
-  requireColumns(rows, requiredCourseColumns, fileName);
-  const seen = new Set<string>();
-  return rows.map((row, index) => {
-    const line = index + 2;
-    if (!row.course_code || !row.course_name) {
-      throw new Error(`${fileName}: row ${line} requires course_code and course_name`);
-    }
-    if (seen.has(row.course_code)) {
-      throw new Error(`${fileName}: duplicate course_code ${row.course_code}`);
-    }
-    seen.add(row.course_code);
-    return { courseCode: row.course_code, courseName: row.course_name };
-  });
-}
-
-export function parseFaculty(content: string): FacultyRow[] {
-  const fileName = 'faculty.csv';
-  const rows = parseCsv(content, fileName);
-  requireColumns(rows, ['faculty_name'], fileName);
-  const seen = new Set<string>();
-  return rows.map((row, index) => {
-    const line = index + 2;
-    if (!row.faculty_name) {
-      throw new Error(`${fileName}: row ${line} requires faculty_name`);
-    }
-    const facultyName = normalizeFacultyName(row.faculty_name);
-    if (seen.has(facultyName)) {
-      throw new Error(`${fileName}: duplicate faculty_name ${facultyName}`);
-    }
-    seen.add(facultyName);
-    return { facultyName };
-  });
 }
 
 export function parseStudents(content: string): StudentRow[] {
@@ -260,52 +223,138 @@ export async function validateEnrollmentDirectories(
   }
 }
 
-export function normalizeFacultyName(sourceName: string): string {
-  const normalized = sourceName.trim();
-  return facultyNameAliases[normalized] ?? normalized;
-}
-
 export function parseTimetable(
   content: string,
-  courses: CourseRow[],
+  sourceFile: string,
+  room: string,
 ): TimetableRow[] {
-  const fileName = 'timetable.csv';
-  const rows = parseCsv(content, fileName);
-  requireColumns(rows, requiredTimetableColumns, fileName);
-  const courseCodes = new Set(courses.map((course) => course.courseCode));
+  if (!room) throw new Error(`${sourceFile}: room is required from the file name`);
+  const rows = parseCsvRows(content, sourceFile);
+  const header = rows[0];
+  if (
+    header.join(',') !== timetableColumnsWithName.join(',') &&
+    header.join(',') !== timetableColumnsWithoutName.join(',')
+  ) {
+    throw new Error(
+      `${sourceFile}: unexpected header "${header.join(',')}"; expected ${timetableColumnsWithName.join(',')}`,
+    );
+  }
 
-  return rows.map((row, index) => {
+  return rows.slice(1).map((values, index) => {
     const line = index + 2;
-    for (const column of requiredTimetableColumns) {
-      if (!row[column]) throw new Error(`${fileName}: row ${line} requires ${column}`);
-    }
-    if (!courseCodes.has(row.course_code)) {
+    let columns: string[];
+    if (values.length === timetableColumnsWithName.length) {
+      columns = timetableColumnsWithName;
+    } else if (values.length === timetableColumnsWithoutName.length) {
+      columns = timetableColumnsWithoutName;
+    } else {
       throw new Error(
-        `${fileName}: row ${line} references unknown course_code ${row.course_code}`,
+        `${sourceFile}: row ${line} has ${values.length} fields; expected ` +
+          `${timetableColumnsWithoutName.length} or ${timetableColumnsWithName.length}`,
       );
     }
-    if (!validDays.has(row.day)) {
-      throw new Error(`${fileName}: row ${line} has invalid day ${row.day}`);
+    const row = Object.fromEntries(columns.map((column, at) => [column, values[at]]));
+
+    for (const column of timetableColumnsWithoutName) {
+      if (!row[column]) throw new Error(`${sourceFile}: row ${line} requires ${column}`);
+    }
+    if (!validDays.has(row.weekday)) {
+      throw new Error(`${sourceFile}: row ${line} has invalid day ${row.weekday}`);
     }
     if (!timePattern.test(row.start_time) || !timePattern.test(row.end_time)) {
-      throw new Error(`${fileName}: row ${line} has invalid time`);
+      throw new Error(`${sourceFile}: row ${line} has invalid time`);
     }
     if (row.start_time >= row.end_time) {
-      throw new Error(`${fileName}: row ${line} end_time must be after start_time`);
-    }
-    if (!validBatches.has(row.batch)) {
-      throw new Error(`${fileName}: row ${line} batch must be A, B, or ALL`);
+      throw new Error(`${sourceFile}: row ${line} end_time must be after start_time`);
     }
     return {
-      day: row.day,
+      sourceFile,
+      sourceLine: line,
+      day: row.weekday,
       startTime: row.start_time,
       endTime: row.end_time,
       courseCode: row.course_code,
-      batch: row.batch as TimetableRow['batch'],
+      courseName: row.course_name ?? null,
+      className: row.class,
+      batch: row.batch,
       facultyName: row.faculty_name,
-      room: row.room,
+      room,
     };
   });
+}
+
+function entryKey(row: TimetableRow): string {
+  return [row.room, row.courseCode, row.day, row.startTime, row.endTime, row.className, row.batch].join('|');
+}
+
+/**
+ * Reports data problems that should not stop the import: the source timetables
+ * contain repeated rows and slots where one room hosts two classes at once.
+ */
+export function timetableWarnings(timetable: TimetableRow[]): string[] {
+  const warnings: string[] = [];
+  const seen = new Map<string, TimetableRow>();
+  const slots = new Map<string, TimetableRow[]>();
+
+  for (const row of timetable) {
+    const key = entryKey(row);
+    const previous = seen.get(key);
+    if (previous) {
+      warnings.push(
+        `${row.sourceFile}: row ${row.sourceLine} repeats row ${previous.sourceLine} ` +
+          `(${row.courseCode} ${row.day} ${row.startTime}); only one entry is stored`,
+      );
+      if (previous.facultyName !== row.facultyName) {
+        warnings.push(
+          `${row.sourceFile}: row ${row.sourceLine} names faculty "${row.facultyName}" ` +
+            `but row ${previous.sourceLine} names "${previous.facultyName}"`,
+        );
+      }
+    } else {
+      seen.set(key, row);
+    }
+    const slot = `${row.room}|${row.day}|${row.startTime}`;
+    const existing = slots.get(slot);
+    if (existing) existing.push(row);
+    else slots.set(slot, [row]);
+  }
+
+  for (const [slot, rows] of slots) {
+    const distinct = new Set(rows.map(entryKey));
+    if (distinct.size > 1) {
+      const [room, day, startTime] = slot.split('|');
+      warnings.push(
+        `${room} is double-booked on ${day} at ${startTime}: ` +
+          rows.map((row) => `${row.courseCode}/${row.className}/${row.batch}`).join(', '),
+      );
+    }
+  }
+  return warnings;
+}
+
+export function deriveCoursesAndFacultyFromTimetable(
+  timetable: TimetableRow[],
+): { courses: CourseRow[]; faculty: FacultyRow[] } {
+  const coursesByCode = new Map<string, string | null>();
+  const facultyNames = new Set<string>();
+  for (const row of timetable) {
+    const known = coursesByCode.get(row.courseCode) ?? null;
+    if (known && row.courseName && known !== row.courseName) {
+      throw new Error(
+        `${row.sourceFile}: row ${row.sourceLine} course_code ${row.courseCode} has conflicting course_name values`,
+      );
+    }
+    coursesByCode.set(row.courseCode, known ?? row.courseName);
+    facultyNames.add(row.facultyName);
+  }
+  return {
+    courses: [...coursesByCode.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([courseCode, courseName]) => ({ courseCode, courseName })),
+    faculty: [...facultyNames]
+      .sort((a, b) => a.localeCompare(b))
+      .map((facultyName) => ({ facultyName })),
+  };
 }
 
 export async function importAcademicData(
@@ -318,9 +367,10 @@ export async function importAcademicData(
   const client = await database.connect();
   let facultyImported = 0;
   let coursesImported = 0;
+  let classroomsImported = 0;
   let timetableEntriesImported = 0;
-  let timetableEntriesLinked = 0;
   let studentsImported = 0;
+  let duplicateRowsSkipped = 0;
   try {
     await client.query('BEGIN');
     const facultyIds = new Map<string, string>();
@@ -345,6 +395,7 @@ export async function importAcademicData(
     }
 
     const courseIds = new Map<string, string>();
+    const classroomIds = new Map<string, string>();
 
     for (const course of courses) {
       const existing = await client.query(
@@ -352,7 +403,8 @@ export async function importAcademicData(
         [course.courseCode],
       );
       if (existing.rows[0]) {
-        if (existing.rows[0].title !== course.courseName) {
+        // The room files carry no course name, so an existing title is kept.
+        if (course.courseName && existing.rows[0].title !== course.courseName) {
           throw new Error(
             `Course ${course.courseCode} conflicts: database has "${existing.rows[0].title}", CSV has "${course.courseName}"`,
           );
@@ -364,67 +416,85 @@ export async function importAcademicData(
       const id = crypto.randomUUID();
       await client.query(
         'INSERT INTO courses (id, code, title) VALUES ($1, $2, $3)',
-        [id, course.courseCode, course.courseName],
+        [id, course.courseCode, course.courseName ?? course.courseCode],
       );
       courseIds.set(course.courseCode, id);
       coursesImported += 1;
     }
 
+    const rooms = [...new Set(timetable.map((entry) => entry.room))];
+    for (const roomName of rooms) {
+      const existing = await client.query(
+        'SELECT id FROM classrooms WHERE name = $1',
+        [roomName],
+      );
+      if (existing.rows[0]) {
+        classroomIds.set(roomName, existing.rows[0].id as string);
+        continue;
+      }
+      const id = crypto.randomUUID();
+      await client.query(
+        'INSERT INTO classrooms (id, name, capacity) VALUES ($1, $2, NULL)',
+        [id, roomName],
+      );
+      classroomIds.set(roomName, id);
+      classroomsImported += 1;
+    }
+
+    const importedKeys = new Set<string>();
     for (const entry of timetable) {
+      if (importedKeys.has(entryKey(entry))) {
+        duplicateRowsSkipped += 1;
+        continue;
+      }
+      importedKeys.add(entryKey(entry));
+
       const courseId = courseIds.get(entry.courseCode);
       if (!courseId) throw new Error(`Missing imported course ${entry.courseCode}`);
-      const facultyName = normalizeFacultyName(entry.facultyName);
-      const facultyId = facultyIds.get(facultyName);
+      const classroomId = classroomIds.get(entry.room);
+      if (!classroomId) throw new Error(`Missing imported classroom ${entry.room}`);
+      const facultyId = facultyIds.get(entry.facultyName);
       if (!facultyId) {
         throw new Error(
-          `Timetable entry ${entry.courseCode} ${entry.day} references unresolved faculty "${entry.facultyName}"`,
+          `${entry.sourceFile}: row ${entry.sourceLine} references unresolved faculty "${entry.facultyName}"`,
         );
       }
       const existing = await client.query(
-        `SELECT id, faculty_id, faculty_name, room
-         FROM timetable_entries
-         WHERE course_id = $1 AND day_of_week = $2
-           AND start_time = $3 AND end_time = $4 AND batch = $5`,
-        [courseId, entry.day, entry.startTime, entry.endTime, entry.batch],
+        `SELECT id, faculty_name FROM timetable_entries
+         WHERE course_id = $1 AND classroom_id = $2 AND day_of_week = $3
+           AND start_time = $4 AND end_time = $5 AND batch = $6 AND class_name = $7`,
+        [courseId, classroomId, entry.day, entry.startTime, entry.endTime, entry.batch, entry.className],
       );
       if (existing.rows[0]) {
-        if (
-          existing.rows[0].faculty_name !== entry.facultyName ||
-          existing.rows[0].room !== entry.room
-        ) {
+        if (existing.rows[0].faculty_name !== entry.facultyName) {
           throw new Error(
-            `Timetable conflict for ${entry.courseCode} ${entry.day} ${entry.startTime}-${entry.endTime} batch ${entry.batch}`,
+            `${entry.sourceFile}: row ${entry.sourceLine} assigns "${entry.facultyName}" to a slot ` +
+              `already held by "${existing.rows[0].faculty_name as string}"`,
           );
-        }
-        if (existing.rows[0].faculty_id !== facultyId) {
-          await client.query(
-            'UPDATE timetable_entries SET faculty_id = $2 WHERE id = $1',
-            [existing.rows[0].id, facultyId],
-          );
-          timetableEntriesLinked += 1;
         }
         continue;
       }
 
       await client.query(
         `INSERT INTO timetable_entries (
-           id, course_id, faculty_id, faculty_name, room,
-           day_of_week, start_time, end_time, batch
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+           id, course_id, faculty_id, faculty_name, classroom_id, room,
+           day_of_week, start_time, end_time, batch, class_name
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           crypto.randomUUID(),
           courseId,
           facultyId,
           entry.facultyName,
+          classroomId,
           entry.room,
           entry.day,
           entry.startTime,
           entry.endTime,
           entry.batch,
+          entry.className,
         ],
       );
       timetableEntriesImported += 1;
-      timetableEntriesLinked += 1;
     }
 
     for (const student of students) {
@@ -470,9 +540,10 @@ export async function importAcademicData(
     return {
       facultyImported,
       coursesImported,
+      classroomsImported,
       timetableEntriesImported,
-      timetableEntriesLinked,
       studentsImported,
+      duplicateRowsSkipped,
     };
   } catch (error) {
     await client.query('ROLLBACK');

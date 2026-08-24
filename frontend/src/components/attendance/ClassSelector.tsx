@@ -1,4 +1,5 @@
 import type { ClassSessionOption } from '../../api/types';
+import { formatTime, formatWeekday } from '../../timezone';
 
 export default function ClassSelector({
   classes,
@@ -38,8 +39,8 @@ export default function ClassSelector({
           >
             {classes.map((item) => (
               <option key={item.id} value={item.id}>
-                {item.courseCode} — {item.courseTitle} ·{' '}
-                {new Date(item.scheduledStart).toLocaleString()}
+                {item.courseCode} — {item.courseTitle} · {formatWeekday(item.scheduledStart)}{' '}
+                {formatTime(item.scheduledStart)}
               </option>
             ))}
           </select>
@@ -57,15 +58,20 @@ export default function ClassSelector({
             <p>
               <strong>Classroom:</strong> {selectedClass.classroomName}
             </p>
+            {selectedClass.className && (
+              <p>
+                <strong>Class:</strong> {selectedClass.className}
+              </p>
+            )}
             {selectedClass.batch && (
               <p>
                 <strong>Batch:</strong> {selectedClass.batch}
               </p>
             )}
             <p>
-              <strong>Scheduled:</strong>{' '}
-              {new Date(selectedClass.scheduledStart).toLocaleString()}–
-              {new Date(selectedClass.scheduledEnd).toLocaleTimeString()}
+              <strong>Scheduled:</strong> {formatWeekday(selectedClass.scheduledStart)}{' '}
+              {formatTime(selectedClass.scheduledStart)}–
+              {formatTime(selectedClass.scheduledEnd)}
             </p>
             <p>
               <strong>Enrolled students:</strong> {selectedClass.students.length}

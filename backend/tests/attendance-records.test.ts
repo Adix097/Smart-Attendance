@@ -8,6 +8,9 @@ import type {
   AttendanceRecord,
   AttendanceRepository,
   AttendanceSession,
+  ClassroomOccurrence,
+  ClassroomOption,
+  ClassroomTimetableEntry,
   ClassSessionOption,
   CreateAttendanceSessionInput,
   EnrolledStudent,
@@ -23,6 +26,10 @@ class MockAttendanceRepository implements AttendanceRepository {
   classSessionExists(): Promise<boolean> { return Promise.resolve(true); }
   ensureUpcomingClassSession(): Promise<void> { return Promise.resolve(); }
   getClassSessionOptions(): Promise<ClassSessionOption[]> { return Promise.resolve([]); }
+  getClassrooms(): Promise<ClassroomOption[]> { return Promise.resolve([]); }
+  classroomExists(): Promise<boolean> { return Promise.resolve(true); }
+  getClassroomTimetable(): Promise<ClassroomTimetableEntry[]> { return Promise.resolve([]); }
+  getClassroomOccurrence(): Promise<ClassroomOccurrence | null> { return Promise.resolve(null); }
   getEnrolledStudents(): Promise<EnrolledStudent[]> { return Promise.resolve([]); }
   createAttendanceContext(): Promise<void> { return Promise.resolve(); }
   getExpectedStudents(): Promise<EnrolledStudent[]> { return Promise.resolve([]); }
