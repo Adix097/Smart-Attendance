@@ -124,7 +124,7 @@ export interface AttendanceRepository {
     classSessionId: string,
   ): Promise<void>;
   getExpectedStudents(attendanceSessionId: string): Promise<EnrolledStudent[]>;
-  getStudentIdentityMap(): Promise<Map<string, string>>;
+  getStudentIdentityMap(): Promise<Map<string, EnrolledStudent>>;
   getAttendanceContext(attendanceSessionId: string): Promise<AttendanceContext | null>;
   storeAttendanceSightings(
     attendanceSessionId: string,

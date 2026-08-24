@@ -67,7 +67,7 @@ async function run(): Promise<void> {
     ? (await repository.getStudentIdentityMap()).get(result.sighting.identity)
     : undefined;
   const expected = student
-    ? expectedStudents.find((candidate) => candidate.id === student)
+    ? expectedStudents.find((candidate) => candidate.id === student.id)
     : undefined;
 
   console.log(

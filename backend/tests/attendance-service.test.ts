@@ -35,7 +35,7 @@ class MockAttendanceRepository implements AttendanceRepository {
   getEnrolledStudents(): Promise<EnrolledStudent[]> { return Promise.resolve([]); }
   createAttendanceContext(): Promise<void> { return Promise.resolve(); }
   getExpectedStudents(): Promise<EnrolledStudent[]> { return Promise.resolve([]); }
-  getStudentIdentityMap(): Promise<Map<string, string>> { return Promise.resolve(new Map()); }
+  getStudentIdentityMap(): Promise<Map<string, EnrolledStudent>> { return Promise.resolve(new Map()); }
   getAttendanceContext(): Promise<AttendanceContext | null> { return Promise.resolve(null); }
   storeAttendanceSightings(_id: string, _sightings: AttendanceSightingInput[]): Promise<void> {
     return Promise.resolve();

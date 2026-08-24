@@ -194,12 +194,22 @@ export class PgAttendanceRepository implements AttendanceRepository {
     }));
   }
 
-  async getStudentIdentityMap(): Promise<Map<string, string>> {
+  async getStudentIdentityMap(): Promise<Map<string, EnrolledStudent>> {
     const result = await this.database.query(
-      'SELECT id, student_number FROM students WHERE student_number IS NOT NULL',
+      `SELECT id, student_number, name, batch, student_group
+       FROM students WHERE student_number IS NOT NULL`,
     );
     return new Map(
-      result.rows.map((row) => [row.student_number as string, row.id as string]),
+      result.rows.map((row) => [
+        row.student_number as string,
+        {
+          id: row.id as string,
+          studentNumber: row.student_number as string,
+          name: row.name as string,
+          batch: row.batch as string | null,
+          group: row.student_group as string | null,
+        },
+      ]),
     );
   }
 

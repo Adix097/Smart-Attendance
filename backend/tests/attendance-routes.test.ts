@@ -65,10 +65,10 @@ class MockAttendanceRepository implements AttendanceRepository {
     return this.getEnrolledStudents('class-1');
   }
 
-  getStudentIdentityMap(): Promise<Map<string, string>> {
+  getStudentIdentityMap(): Promise<Map<string, EnrolledStudent>> {
     return Promise.resolve(new Map([
-      ['student-a', 'student-a'],
-      ['student-b', 'student-b'],
+      ['student-a', { id: 'student-a', studentNumber: 'student-a', name: 'Student A', batch: null, group: null }],
+      ['student-b', { id: 'student-b', studentNumber: 'student-b', name: 'Student B', batch: null, group: null }],
     ]));
   }
 

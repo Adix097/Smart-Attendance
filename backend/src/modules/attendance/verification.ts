@@ -31,6 +31,26 @@ export type VerificationResult =
   | 'UNEXPECTED_STUDENT'
   | 'UNKNOWN';
 
+export type IdentityResolutionStatus = 'EXPECTED' | 'UNEXPECTED_STUDENT' | 'UNKNOWN';
+
+export interface ResolvedIdentity {
+  student: EnrolledStudent | null;
+  status: IdentityResolutionStatus;
+}
+
+export function resolveRecognizedIdentity(
+  identity: string | null,
+  globalIdentityMap: ReadonlyMap<string, EnrolledStudent>,
+  expectedStudentIds: ReadonlySet<string>,
+): ResolvedIdentity {
+  const student = identity === null ? undefined : globalIdentityMap.get(identity);
+  if (!student) return { student: null, status: 'UNKNOWN' };
+  return {
+    student,
+    status: expectedStudentIds.has(student.id) ? 'EXPECTED' : 'UNEXPECTED_STUDENT',
+  };
+}
+
 export interface StudentVerification {
   studentId: string | null;
   totalSightings: number;
@@ -127,3 +147,4 @@ export function calculateOccupancy(
     occupancyRatio: expectedCount === 0 ? 0 : Math.min(1, observedCount / expectedCount),
   };
 }
+import type { EnrolledStudent } from './types.js';

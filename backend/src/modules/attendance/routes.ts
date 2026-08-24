@@ -29,6 +29,7 @@ import { config } from '../../config.js';
 import {
   calculateOccupancy,
   defaultVerificationConfig,
+  resolveRecognizedIdentity,
   verifyStudent,
 } from './verification.js';
 
@@ -236,17 +237,18 @@ export function createAttendanceRouter({
       }
       const expectedStudentIds = new Set(enrolledStudents.map((student) => student.id));
       const sightings = (inference.sightings ?? []).map((sighting) => {
-        const studentId =
-          sighting.identity === null
-            ? null
-            : globalIdentityMap.get(sighting.identity) ?? null;
+        const globalStudent = resolveRecognizedIdentity(
+          sighting.identity,
+          globalIdentityMap,
+          expectedStudentIds,
+        ).student;
         const observedAt = new Date(
           new Date(context.scheduledStart).getTime() +
             sighting.timestamp_seconds * 1000,
         );
         return {
           id: crypto.randomUUID(),
-          studentId,
+          studentId: globalStudent?.id ?? null,
           trackerId: sighting.tracker_id,
           observedAt: observedAt.toISOString(),
           cameraId: sighting.camera_id ?? null,
@@ -296,17 +298,15 @@ export function createAttendanceRouter({
         repository,
         session.id,
         inference.results.map((result) => {
-          const studentId =
-            result.status === 'unknown' ? null : globalIdentityMap.get(result.identity) ?? null;
-          const expectedStudentIds = new Set(enrolledStudents.map((student) => student.id));
+          const resolved = resolveRecognizedIdentity(
+            result.status === 'unknown' ? null : result.identity,
+            globalIdentityMap,
+            expectedStudentIds,
+          );
+          const globalStudent = resolved.student;
+          const studentId = globalStudent?.id ?? null;
           const verificationResult =
-            result.status === 'unknown'
-              ? 'UNKNOWN'
-              : studentId === null
-                ? 'UNKNOWN'
-                : expectedStudentIds.has(studentId)
-                  ? 'FACULTY_REVIEW_REQUIRED'
-                  : 'UNEXPECTED_STUDENT';
+            resolved.status === 'EXPECTED' ? 'FACULTY_REVIEW_REQUIRED' : resolved.status;
           return {
             id: crypto.randomUUID(),
             studentId,
@@ -317,6 +317,10 @@ export function createAttendanceRouter({
             identityMargin: result.identity_margin,
             evidence: {
               identity: result.identity,
+              global_student_name: globalStudent?.name ?? null,
+              global_student_number: globalStudent?.studentNumber ?? null,
+              global_student_batch: globalStudent?.batch ?? null,
+              global_student_group: globalStudent?.group ?? null,
               video: inference.video,
               sampling: inference.sampling,
               detected_faces: inference.detected_faces,
