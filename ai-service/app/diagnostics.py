@@ -8,20 +8,21 @@ import cv2
 from app.config import InferenceConfig
 from app.pipelines.recognition import model_version
 from app.recognition.aggregation import status_for_sighting
-from app.recognition.gallery import load_gallery
+from app.recognition.gallery import EnrollmentGallery, load_gallery
 from app.recognition.matching import match_embedding
 from app.recognition.tracking import LightweightTracker, box_from_face
 from app.schemas import BoundingBox, RecognitionSighting, RecognitionTestResponse
 
 
-def run_recognition_test(image_path: Path, enrollment_dir: Path, config: InferenceConfig, analysis: Any) -> RecognitionTestResponse:
+def run_recognition_test(image_path: Path, enrollment_dir: Path, config: InferenceConfig, analysis: Any, gallery: EnrollmentGallery | None = None) -> RecognitionTestResponse:
     if not image_path.is_file():
         raise ValueError(f"Image file does not exist: {image_path}")
     image = cv2.imread(str(image_path))
     if image is None:
         raise ValueError(f"Unable to read image: {image_path}")
 
-    gallery = load_gallery(analysis, enrollment_dir)
+    if gallery is None:
+        gallery = load_gallery(analysis, enrollment_dir)
     faces = analysis.get(image)
     if not faces:
         return RecognitionTestResponse(

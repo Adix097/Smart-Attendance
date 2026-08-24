@@ -84,3 +84,10 @@ class RecognitionTestResponse(BaseModel):
     model_version: str | None
     sighting: RecognitionSighting | None
     warnings: list[str]
+
+
+class EnrollmentRefreshResponse(BaseModel):
+    source: str
+    identities: int
+    images: int
+    warnings: list[str]

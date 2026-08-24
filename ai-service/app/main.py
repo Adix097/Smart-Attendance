@@ -5,10 +5,16 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 import uvicorn
 
-from app.config import InferenceConfig, settings
+from app.config import InferenceConfig, enrollment_settings, settings
 from app.diagnostics import run_recognition_test
 from app.pipelines.recognition import build_analysis, run_video_inference
+from app.recognition.enrollment_source import (
+    EnrollmentSourceError,
+    load_enrollment_gallery,
+    refresh_enrollment_gallery,
+)
 from app.schemas import (
+    EnrollmentRefreshResponse,
     InferenceRequest,
     InferenceResponse,
     RecognitionTestRequest,
@@ -31,7 +37,11 @@ def _dev_harness_enabled() -> bool:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "service": "ai-service"}
+    return {
+        "status": "ok",
+        "service": "ai-service",
+        "enrollment_source": enrollment_settings.source,
+    }
 
 
 @app.post("/v1/inference", response_model=InferenceResponse)
@@ -46,11 +56,18 @@ def inference(request: InferenceRequest) -> InferenceResponse:
         minimum_observations=request.minimum_observations,
     )
     try:
+        analysis = _analysis_for(config)
         return run_video_inference(
             video_path=Path(request.video_path),
             enrollment_dir=Path(request.enrollment_dir),
             config=config,
-            analysis=_analysis_for(config),
+            analysis=analysis,
+            gallery=load_enrollment_gallery(
+                analysis,
+                Path(request.enrollment_dir),
+                config,
+                enrollment_settings,
+            ),
         )
     except (OSError, RuntimeError, ValueError) as error:
         return InferenceResponse(
@@ -74,14 +91,35 @@ def recognition_test(request: RecognitionTestRequest) -> RecognitionTestResponse
     if not _dev_harness_enabled():
         raise HTTPException(status_code=404, detail="Development harness is disabled")
     try:
+        analysis = _analysis_for(settings)
         return run_recognition_test(
             image_path=Path(request.image_path),
             enrollment_dir=Path(request.enrollment_dir),
             config=settings,
-            analysis=_analysis_for(settings),
+            analysis=analysis,
+            gallery=load_enrollment_gallery(
+                analysis,
+                Path(request.enrollment_dir),
+                settings,
+                enrollment_settings,
+            ),
         )
     except (OSError, RuntimeError, ValueError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/v1/enrollment/refresh", response_model=EnrollmentRefreshResponse)
+def refresh_enrollment() -> EnrollmentRefreshResponse:
+    try:
+        refreshed = refresh_enrollment_gallery(enrollment_settings)
+    except EnrollmentSourceError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return EnrollmentRefreshResponse(
+        source=refreshed.source,
+        identities=refreshed.identities,
+        images=refreshed.images,
+        warnings=refreshed.warnings,
+    )
 
 
 def server_config() -> tuple[str, int]:

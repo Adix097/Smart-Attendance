@@ -1,7 +1,21 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import dataclass, replace
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(PROJECT_ROOT / ".env", override=False)
+
+ENROLLMENT_SOURCES = ("local", "supabase")
+
+
+def _str_env(name: str, default: str = "") -> str:
+    return (os.getenv(name) or default).strip()
+
 
 def _float_env(name: str, default: float) -> float:
     raw_value = os.getenv(name)
@@ -54,4 +68,39 @@ class InferenceConfig:
         values = {key: value for key, value in overrides.items() if value is not None}
         return replace(self, **values)
 
+@dataclass(frozen=True)
+class EnrollmentConfig:
+    source: str = _str_env("ENROLLMENT_SOURCE", "local").lower()
+    supabase_url: str = _str_env("SUPABASE_URL").rstrip("/")
+    supabase_service_role_key: str = _str_env("SUPABASE_SERVICE_ROLE_KEY")
+    supabase_bucket: str = _str_env("SUPABASE_STORAGE_BUCKET", "enrollment")
+    cache_dir: str = _str_env("ENROLLMENT_CACHE_DIR")
+
+    def __post_init__(self) -> None:
+        if self.source not in ENROLLMENT_SOURCES:
+            raise ValueError(
+                f"ENROLLMENT_SOURCE must be one of {', '.join(ENROLLMENT_SOURCES)}"
+            )
+        if self.source != "supabase":
+            return
+        missing = [
+            name
+            for name, value in (
+                ("SUPABASE_URL", self.supabase_url),
+                ("SUPABASE_SERVICE_ROLE_KEY", self.supabase_service_role_key),
+                ("SUPABASE_STORAGE_BUCKET", self.supabase_bucket),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                f"ENROLLMENT_SOURCE=supabase requires {', '.join(missing)}"
+            )
+
+    def resolved_cache_dir(self) -> Path:
+        if self.cache_dir:
+            return Path(self.cache_dir)
+        return Path(tempfile.gettempdir()) / "smart-attendance-enrollment"
+
 settings = InferenceConfig()
+enrollment_settings = EnrollmentConfig()

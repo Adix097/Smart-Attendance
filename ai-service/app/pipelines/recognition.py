@@ -13,7 +13,7 @@ from app.recognition.aggregation import (
     aggregate_observations,
     status_for_sighting,
 )
-from app.recognition.gallery import load_gallery
+from app.recognition.gallery import EnrollmentGallery, load_gallery
 from app.recognition.matching import match_embedding
 from app.recognition.tracking import LightweightTracker, box_from_face
 from app.schemas import (
@@ -48,14 +48,15 @@ def _frame_interval(source_fps: float, requested_fps: float) -> int:
     return max(1, round(source_fps / requested_fps))
 
 
-def run_video_inference( video_path: Path, enrollment_dir: Path, config: InferenceConfig, analysis: Any | None = None) -> InferenceResponse:
+def run_video_inference( video_path: Path, enrollment_dir: Path, config: InferenceConfig, analysis: Any | None = None, gallery: EnrollmentGallery | None = None) -> InferenceResponse:
     started = time.perf_counter()
     if not video_path.is_file():
         raise ValueError(f"Video file does not exist: {video_path}")
 
     if analysis is None:
         analysis = build_analysis(config)
-    gallery = load_gallery(analysis, enrollment_dir)
+    if gallery is None:
+        gallery = load_gallery(analysis, enrollment_dir)
 
     capture = cv2.VideoCapture(str(video_path))
     if not capture.isOpened():
