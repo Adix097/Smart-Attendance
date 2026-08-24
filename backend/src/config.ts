@@ -29,4 +29,5 @@ export const config = {
   databaseSsl: process.env.DB_SSL === 'true',
   enrollmentRoot: process.env.ENROLLMENT_ROOT?.trim() || path.resolve(process.cwd(), 'data', 'enrollment'),
   timeZone: process.env.APP_TIMEZONE ?? 'Asia/Kolkata',
+  allowEndedSessionTest: process.env.ALLOW_ENDED_SESSION_TEST === 'true',
 };

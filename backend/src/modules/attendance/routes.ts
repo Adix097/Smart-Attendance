@@ -382,6 +382,7 @@ export function createAttendanceRouter({
           logContext: {
             attendance_session_id: session.id,
             session_timing: timing,
+            ended_session_test: config.allowEndedSessionTest,
           },
         },
       );

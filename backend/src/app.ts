@@ -48,7 +48,11 @@ export function createApp(
   app.use(express.json({ limit: '64mb' }));
 
   app.get('/api/health', (_request, response) => {
-    response.json({ status: 'ok', service: 'backend' });
+    response.json({
+      status: 'ok',
+      service: 'backend',
+      ended_session_test: config.allowEndedSessionTest,
+    });
   });
 
   /**

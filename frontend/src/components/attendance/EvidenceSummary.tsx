@@ -33,10 +33,22 @@ export default function EvidenceSummary({
   observations: AttendanceObservation[];
   students: EnrolledStudent[];
 }) {
+  const galleryHint = observations
+    .flatMap((item) =>
+      Array.isArray(item.evidence.warnings) ? item.evidence.warnings : [],
+    )
+    .find(
+      (line): line is string =>
+        typeof line === 'string' && line.startsWith('Enrollment images accepted'),
+    );
+
   return (
     <section className="my-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-4">
         <h2 className="text-lg font-semibold">Recognition evidence</h2>
+        {galleryHint && (
+          <p className="mt-1 text-sm text-slate-600">{galleryHint}</p>
+        )}
       </div>
 
       {observationStatuses.map((status) => {

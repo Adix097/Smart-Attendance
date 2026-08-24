@@ -19,8 +19,8 @@ export default function ReviewActions({
   onProcess: () => void;
 }) {
   const processing = session?.status === 'processing';
-  // Recognition needs footage of the class, so it stays closed until it starts.
   const notStarted = selectedClass?.status === 'upcoming';
+  const ended = selectedClass?.status === 'ended';
 
   return (
     <section className="my-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -36,6 +36,13 @@ export default function ReviewActions({
             {formatTime(selectedClass.scheduledStart)}
           </strong>{' '}
           ({displayTimeZone}).
+        </p>
+      )}
+
+      {ended && selectedClass && (
+        <p className="mb-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-800">
+          This class has already ended. You can still process a recording of it;
+          tomorrow&apos;s timetable is unchanged.
         </p>
       )}
 

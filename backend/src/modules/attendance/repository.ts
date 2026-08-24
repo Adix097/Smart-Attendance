@@ -19,9 +19,12 @@ import type {
 } from './types.js';
 import { defaultVerificationConfig } from './verification.js';
 import {
+  mostRecentEndedOccurrence,
   occurrenceStatus,
+  selectAttendanceClassRows,
   selectRelevantOccurrences,
   timetableOccurrences,
+  type ScheduledOccurrence,
   type TimetableOccurrenceRow,
 } from './schedule.js';
 import { config } from '../../config.js';
@@ -285,26 +288,36 @@ export class PgAttendanceRepository implements AttendanceRepository {
     const selected = [...byClassroom.values()].flatMap((rows) =>
       selectRelevantOccurrences(timetableOccurrences(rows, now, config.timeZone), now),
     );
+    if (config.allowEndedSessionTest) {
+      for (const rows of byClassroom.values()) {
+        const ended = mostRecentEndedOccurrence(rows, now, config.timeZone);
+        if (ended) selected.push(ended);
+      }
+    }
     for (const occurrence of selected) {
-      await this.database.query(
-        `INSERT INTO class_sessions (
+      await this.insertTimetableClassSession(occurrence);
+    }
+  }
+
+  private async insertTimetableClassSession(occurrence: ScheduledOccurrence): Promise<void> {
+    await this.database.query(
+      `INSERT INTO class_sessions (
          id, timetable_entry_id, course_id, faculty_id, classroom_id,
          scheduled_start, scheduled_end
        )
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (timetable_entry_id, scheduled_start)
        WHERE timetable_entry_id IS NOT NULL DO NOTHING`,
-        [
-          crypto.randomUUID(),
-          occurrence.row.id,
-          occurrence.row.course_id,
-          occurrence.row.faculty_id,
-          occurrence.row.classroom_id,
-          occurrence.start.toISOString(),
-          occurrence.end.toISOString(),
-        ],
-      );
-    }
+      [
+        crypto.randomUUID(),
+        occurrence.row.id,
+        occurrence.row.course_id,
+        occurrence.row.faculty_id,
+        occurrence.row.classroom_id,
+        occurrence.start.toISOString(),
+        occurrence.end.toISOString(),
+      ],
+    );
   }
 
   async getClassrooms(): Promise<ClassroomOption[]> {
@@ -406,22 +419,26 @@ export class PgAttendanceRepository implements AttendanceRepository {
       params,
     );
     const now = new Date();
-    const active = result.rows.filter(
-      (row) =>
-        (row.scheduled_start as Date) <= now && now < (row.scheduled_end as Date),
+    const listed = selectAttendanceClassRows(
+      result.rows as Array<{
+        id: string;
+        scheduled_start: Date;
+        scheduled_end: Date;
+        course_id: string;
+        classroom_id: string;
+        code: string;
+        title: string;
+        faculty_name: string;
+        class_name: string | null;
+        classroom_name: string;
+        batch: string | null;
+      }>,
+      now,
+      config.allowEndedSessionTest,
     );
-    const upcoming = result.rows.filter((row) => (row.scheduled_start as Date) > now);
-    const earliestUpcoming = upcoming[0]?.scheduled_start as Date | undefined;
-    const relevant =
-      active.length > 0
-        ? active
-        : upcoming.filter(
-          (row) =>
-            (row.scheduled_start as Date).getTime() === earliestUpcoming?.getTime(),
-        );
 
     const options: ClassSessionOption[] = [];
-    for (const row of relevant) {
+    for (const row of listed) {
       options.push({
         id: row.id as string,
         courseId: row.course_id as string,

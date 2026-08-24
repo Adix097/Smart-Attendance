@@ -125,3 +125,76 @@ export function occurrenceStatus(start: Date, end: Date, now: Date): ClassOccurr
   if (now < end) return 'active';
   return 'ended';
 }
+
+/**
+ * The latest timetable slot that has already finished, in the app timezone.
+ * Used only when ended-session testing is explicitly enabled.
+ */
+export function mostRecentEndedOccurrence(
+  rows: TimetableOccurrenceRow[],
+  now: Date,
+  timeZone: string,
+): ScheduledOccurrence | null {
+  const localNow = zonedParts(now, timeZone);
+  const weekdayIndex = dayIndexes[localNow.weekday];
+  if (weekdayIndex === undefined) return null;
+
+  let latest: ScheduledOccurrence | null = null;
+  for (const row of rows) {
+    const targetDay = dayIndexes[row.day_of_week];
+    if (targetDay === undefined) continue;
+    const [hours, minutes] = String(row.start_time).slice(0, 5).split(':').map(Number);
+    const [endHours, endMinutes] = String(row.end_time).slice(0, 5).split(':').map(Number);
+    const overnight = endHours * 60 + endMinutes <= hours * 60 + minutes;
+    const daysBack = (weekdayIndex - targetDay + 7) % 7;
+
+    const occurrenceFor = (back: number): ScheduledOccurrence => {
+      const date = nextDateParts(localNow, -back);
+      const start = zonedDate(date.year, date.month, date.day, hours, minutes, timeZone);
+      const endDate = overnight ? nextDateParts(localNow, -back + 1) : date;
+      const end = zonedDate(
+        endDate.year,
+        endDate.month,
+        endDate.day,
+        endHours,
+        endMinutes,
+        timeZone,
+      );
+      return { row, start, end };
+    };
+
+    let candidate = occurrenceFor(daysBack);
+    if (candidate.end > now) candidate = occurrenceFor(daysBack + 7);
+    if (candidate.end > now) continue;
+    if (!latest || candidate.end > latest.end) latest = candidate;
+  }
+  return latest;
+}
+
+export function selectAttendanceClassRows<
+  T extends { id: string; scheduled_start: Date; scheduled_end: Date },
+>(rows: T[], now: Date, includeEnded: boolean): T[] {
+  const active = rows.filter(
+    (row) => row.scheduled_start <= now && now < row.scheduled_end,
+  );
+  const upcoming = rows
+    .filter((row) => row.scheduled_start > now)
+    .sort((a, b) => a.scheduled_start.getTime() - b.scheduled_start.getTime());
+  const earliestUpcoming = upcoming[0]?.scheduled_start.getTime();
+  const relevant =
+    active.length > 0
+      ? active
+      : upcoming.filter((row) => row.scheduled_start.getTime() === earliestUpcoming);
+
+  if (!includeEnded) return relevant;
+
+  const ended = rows
+    .filter((row) => row.scheduled_end <= now)
+    .sort((a, b) => b.scheduled_end.getTime() - a.scheduled_end.getTime());
+  const latestEnded = ended[0];
+  if (!latestEnded) return relevant;
+  return [
+    latestEnded,
+    ...relevant.filter((row) => row.id !== latestEnded.id),
+  ];
+}

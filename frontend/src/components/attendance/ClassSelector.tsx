@@ -19,7 +19,11 @@ export default function ClassSelector({
       <div>
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">
-            {selectedClass?.status === 'active' ? 'Current Class' : 'Next Class'}
+            {selectedClass?.status === 'active'
+              ? 'Current Class'
+              : selectedClass?.status === 'ended'
+                ? 'Ended Class'
+                : 'Next Class'}
           </h2>
           {selectedClass?.status && (
             <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold uppercase text-blue-800">
