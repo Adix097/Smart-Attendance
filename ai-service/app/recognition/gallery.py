@@ -40,9 +40,7 @@ def load_gallery(analysis: Any, enrollment_dir: Path) -> EnrollmentGallery:
 
     person_dirs = sorted(path for path in enrollment_dir.iterdir() if path.is_dir())
     if not person_dirs:
-        raise ValueError(
-            "Enrollment directory must contain one subdirectory per identity"
-        )
+        raise ValueError("Enrollment directory must contain one subdirectory per identity")
 
     embeddings: dict[str, list[np.ndarray]] = {}
     accepted_images = 0

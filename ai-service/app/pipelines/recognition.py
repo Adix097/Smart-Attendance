@@ -24,12 +24,11 @@ from app.schemas import (
     VideoMetadata,
 )
 
+from insightface.app import FaceAnalysis
 
 def build_analysis(config: InferenceConfig) -> Any:
     if config.provider != "CPUExecutionProvider":
         raise ValueError("This MVP supports CPUExecutionProvider only")
-
-    from insightface.app import FaceAnalysis
 
     analysis = FaceAnalysis(name=config.model_name, providers=[config.provider])
     analysis.prepare(ctx_id=0, det_size=(640, 640))
@@ -49,12 +48,7 @@ def _frame_interval(source_fps: float, requested_fps: float) -> int:
     return max(1, round(source_fps / requested_fps))
 
 
-def run_video_inference(
-    video_path: Path,
-    enrollment_dir: Path,
-    config: InferenceConfig,
-    analysis: Any | None = None,
-) -> InferenceResponse:
+def run_video_inference( video_path: Path, enrollment_dir: Path, config: InferenceConfig, analysis: Any | None = None) -> InferenceResponse:
     started = time.perf_counter()
     if not video_path.is_file():
         raise ValueError(f"Video file does not exist: {video_path}")

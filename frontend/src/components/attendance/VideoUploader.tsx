@@ -35,7 +35,7 @@ export default function VideoUploader({
       return;
     }
     if (candidate.size > maxFileSize) {
-      setError('Video files must be smaller than 48 MB for local processing.');
+      setError('Video files must be smaller than 48 MB');
       return;
     }
     if (
@@ -62,9 +62,8 @@ export default function VideoUploader({
       {!file ? (
         <button
           type="button"
-          className={`rounded-xl border-2 border-dashed p-8 text-center ${
-            dragging ? 'border-blue-600 bg-blue-50' : 'border-slate-300 bg-slate-50'
-          } ${disabled ? 'cursor-not-allowed opacity-50' : 'hover:border-blue-500'}`}
+          className={`rounded-xl border-2 border-dashed p-8 text-center ${dragging ? 'border-blue-600 bg-blue-50' : 'border-slate-300 bg-slate-50'
+            } ${disabled ? 'cursor-not-allowed opacity-50' : 'hover:border-blue-500'}`}
           onClick={() => inputRef.current?.click()}
           onDragOver={(event) => {
             event.preventDefault();

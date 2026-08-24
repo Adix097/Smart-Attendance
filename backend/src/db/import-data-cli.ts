@@ -54,15 +54,15 @@ async function run(): Promise<void> {
       `Rooms discovered:   ${timetableFiles.length} (${timetableFiles
         .map((file) => path.basename(file, '.csv'))
         .join(', ')})`,
-      `Timetable rows:     ${timetable.length}`,
-      `Distinct courses:   ${courses.length}`,
-      `Distinct faculty:   ${faculty.length}`,
-      `Inserted classrooms:       ${summary.classroomsImported}`,
-      `Inserted courses:          ${summary.coursesImported}`,
-      `Inserted faculty:          ${summary.facultyImported}`,
-      `Inserted timetable rows:   ${summary.timetableEntriesImported}`,
-      `Inserted students:         ${summary.studentsImported}`,
-      `Repeated rows skipped:     ${summary.duplicateRowsSkipped}`,
+      `Timetable rows: ${timetable.length}`,
+      `Distinct courses: ${courses.length}`,
+      `Distinct faculty: ${faculty.length}`,
+      `Inserted classrooms: ${summary.classroomsImported}`,
+      `Inserted courses: ${summary.coursesImported}`,
+      `Inserted faculty: ${summary.facultyImported}`,
+      `Inserted timetable rows: ${summary.timetableEntriesImported}`,
+      `Inserted students: ${summary.studentsImported}`,
+      `Repeated rows skipped: ${summary.duplicateRowsSkipped}`,
     ].join('\n'),
   );
 }

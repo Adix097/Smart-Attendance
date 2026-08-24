@@ -20,15 +20,7 @@ export default function ReviewActions({
   return (
     <section className="my-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Process classroom video</h2>
-          <p className="text-slate-600">
-            Video is processed by the backend; audio is not captured.
-          </p>
-        </div>
-        <span className="text-sm text-slate-500">
-          CPU InsightFace · provisional evidence
-        </span>
+        <h2 className="text-lg font-semibold">Process classroom video</h2>
       </div>
 
       <AttendanceInput
@@ -36,12 +28,6 @@ export default function ReviewActions({
         disabled={busy || processing}
         onChange={onSourceChange}
       />
-
-      <p className="mb-4 text-sm text-slate-600">
-        Enrollment images are resolved by the backend from the imported student
-        directories.
-      </p>
-
       <button
         className="rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
         onClick={onProcess}

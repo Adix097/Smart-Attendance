@@ -28,15 +28,15 @@ export default function AttendanceRow({
       <div className="flex-1">
         <strong>{name}</strong>
         <span className="ml-2 text-sm text-slate-500">
-          {finalized ? 'Finalized' : 'Provisional'} · AI evidence
+          {finalized ? 'Finalized' : 'Provisional'}
         </span>
         <div className="mt-1 text-sm text-slate-600">
-          {record.verificationResult ?? 'FACULTY_REVIEW_REQUIRED'} · Sightings:{' '}
+          {record.verificationResult ?? 'FACULTY_REVIEW_REQUIRED'}, Sightings:{' '}
           {record.totalSightings}
           {record.lateEntry ? ' · Late entry' : ''}
         </div>
         <div className="text-xs text-slate-500">
-          First seen: {time(record.firstSeen)} · Last seen: {time(record.lastSeen)}
+          First seen: {time(record.firstSeen)}, Last seen: {time(record.lastSeen)}
         </div>
       </div>
 

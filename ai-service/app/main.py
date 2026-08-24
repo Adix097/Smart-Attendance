@@ -3,6 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+import uvicorn
 
 from app.config import InferenceConfig, settings
 from app.diagnostics import run_recognition_test
@@ -58,18 +59,13 @@ def inference(request: InferenceRequest) -> InferenceResponse:
             model_version=None,
             processing_time_seconds=0,
             video=None,
-            sampling=SamplingConfiguration(
-                requested_fps=config.sampling_fps,
-                frame_interval=1,
-            ),
+            sampling=SamplingConfiguration(requested_fps=config.sampling_fps, frame_interval=1),
             detected_faces=0,
             sampled_frames=0,
             results=[],
             sightings=[],
             errors=[str(error)],
-            warnings=[
-                "Inference did not complete; no attendance was finalized.",
-            ],
+            warnings=["Inference did not complete; no attendance was finalized."],
         )
 
 
@@ -100,7 +96,5 @@ def server_config() -> tuple[str, int]:
 
 
 if __name__ == "__main__":
-    import uvicorn
-
     host, port = server_config()
     uvicorn.run(app, host=host, port=port)

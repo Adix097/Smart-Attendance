@@ -37,9 +37,6 @@ export default function EvidenceSummary({
     <section className="my-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="mb-4">
         <h2 className="text-lg font-semibold">Recognition evidence</h2>
-        <p className="text-slate-600">
-          Similarity is not a probability or confidence percentage.
-        </p>
       </div>
 
       {observationStatuses.map((status) => {
@@ -49,9 +46,7 @@ export default function EvidenceSummary({
             <h3 className="mb-2 mt-5 font-semibold">
               {status[0].toUpperCase() + status.slice(1)} ({items.length})
             </h3>
-            {items.length === 0 ? (
-              <p className="italic text-slate-500">No observations in this category.</p>
-            ) : (
+            {items.length === 0 ? (<p className="italic text-slate-500">No observations in this category.</p>) : (
               items.map((observation) => {
                 const verification = evidenceText(observation, 'verification_result');
                 const studentNumber = evidenceText(

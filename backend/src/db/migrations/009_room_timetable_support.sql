@@ -1,4 +1,3 @@
--- Room CSV files replace the single timetable.csv, so a timetable entry is now
 -- identified by its classroom as well as its course and time slot.
 
 -- Room files carry no capacity figure.

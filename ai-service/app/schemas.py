@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 from typing import Literal
-
 from pydantic import BaseModel, Field
 
 
@@ -16,9 +14,7 @@ class InferenceRequest(BaseModel):
     sampling_fps: float | None = Field(default=None, gt=0)
     acceptance_threshold: float | None = Field(default=None, ge=0, le=1)
     unknown_threshold: float | None = Field(default=None, ge=0, le=1)
-    identity_margin_threshold: float | None = Field(
-        default=None, ge=0, le=2
-    )
+    identity_margin_threshold: float | None = Field(default=None, ge=0, le=2)
     minimum_observations: int | None = Field(default=None, ge=1)
 
 

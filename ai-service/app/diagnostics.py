@@ -14,12 +14,7 @@ from app.recognition.tracking import LightweightTracker, box_from_face
 from app.schemas import BoundingBox, RecognitionSighting, RecognitionTestResponse
 
 
-def run_recognition_test(
-    image_path: Path,
-    enrollment_dir: Path,
-    config: InferenceConfig,
-    analysis: Any,
-) -> RecognitionTestResponse:
+def run_recognition_test(image_path: Path, enrollment_dir: Path, config: InferenceConfig, analysis: Any) -> RecognitionTestResponse:
     if not image_path.is_file():
         raise ValueError(f"Image file does not exist: {image_path}")
     image = cv2.imread(str(image_path))
@@ -40,9 +35,7 @@ def run_recognition_test(
     box = box_from_face(face)
     tracker_id = LightweightTracker().update([box], 0)[0]
     match = match_embedding(face.embedding, gallery)
-    identity = (
-        match.identity if match.best_similarity >= config.unknown_threshold else None
-    )
+    identity = match.identity if match.best_similarity >= config.unknown_threshold else None
     return RecognitionTestResponse(
         model_name=config.model_name,
         model_version=model_version(),

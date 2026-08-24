@@ -16,38 +16,24 @@ class Observation:
     identity_margin: float | None
 
 
-def status_for_sighting(
-    best_similarity: float,
-    identity_margin: float | None,
-    config: InferenceConfig,
-) -> str:
+def status_for_sighting( best_similarity: float, identity_margin: float | None, config: InferenceConfig) -> str:
     if best_similarity < config.unknown_threshold:
         return "unknown"
     if best_similarity < config.acceptance_threshold:
         return "uncertain"
-    if (
-        identity_margin is not None
-        and identity_margin < config.identity_margin_threshold
-    ):
+    if ( identity_margin is not None and identity_margin < config.identity_margin_threshold):
         return "uncertain"
     return "confirmed"
 
 
-def _aggregate_status(
-    observation_count: int,
-    best_similarity: float,
-    identity_margin: float | None,
-    config: InferenceConfig,
-) -> str:
+def _aggregate_status( observation_count: int, best_similarity: float, identity_margin: float | None, config: InferenceConfig) -> str:
     status = status_for_sighting(best_similarity, identity_margin, config)
     if status == "confirmed" and observation_count < config.minimum_observations:
         return "uncertain"
     return status
 
 
-def aggregate_observations(
-    observations: list[Observation], config: InferenceConfig
-) -> list[RecognitionResult]:
+def aggregate_observations(observations: list[Observation], config: InferenceConfig) -> list[RecognitionResult]:
     grouped: dict[str, list[Observation]] = defaultdict(list)
     for observation in observations:
         grouped[observation.identity or "unknown"].append(observation)

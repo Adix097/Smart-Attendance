@@ -54,8 +54,7 @@ export default function useClassroomTimetable() {
     classrooms,
     selectedClassroomId,
     setSelectedClassroomId,
-    selectedClassroom:
-      classrooms.find((room) => room.id === selectedClassroomId) ?? null,
+    selectedClassroom: classrooms.find((room) => room.id === selectedClassroomId) ?? null,
     timetable,
     loading,
     error,

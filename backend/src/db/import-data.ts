@@ -3,8 +3,6 @@ import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { Pool } from 'pg';
 
-// The room files declare a course_name column in the header but do not supply a
-// value for it, so a data row is either the full 8 fields or 7 without the name.
 const timetableColumnsWithName = [
   'course_code',
   'course_name',
@@ -121,11 +119,7 @@ function parseCsv(content: string, fileName: string): Record<string, string>[] {
   });
 }
 
-function requireColumns(
-  rows: Record<string, string>[],
-  required: string[],
-  fileName: string,
-): void {
+function requireColumns(rows: Record<string, string>[], required: string[], fileName: string): void {
   const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
   const missing = required.filter((column) => !columns.includes(column));
   if (missing.length > 0) {
@@ -167,40 +161,28 @@ const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.bmp']);
 const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 function hasSupportedImageSignature(bytes: Buffer): boolean {
-  const isJpeg =
-    bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const isJpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   const isPng = bytes.length >= 8 && bytes.subarray(0, 8).equals(pngSignature);
   const isBmp = bytes.length >= 2 && bytes.toString('ascii', 0, 2) === 'BM';
-  const isWebp =
-    bytes.length >= 12 &&
-    bytes.toString('ascii', 0, 4) === 'RIFF' &&
-    bytes.toString('ascii', 8, 12) === 'WEBP';
+  const isWebp = bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
   return isJpeg || isPng || isBmp || isWebp;
 }
 
-export async function validateEnrollmentDirectories(
-  students: StudentRow[],
-  enrollmentRoot: string,
-): Promise<void> {
+export async function validateEnrollmentDirectories(students: StudentRow[], enrollmentRoot: string): Promise<void> {
   for (const student of students) {
     const directory = path.join(enrollmentRoot, student.studentId);
     let entries;
     try {
       entries = await readdir(directory, { withFileTypes: true });
     } catch {
-      throw new Error(
-        `Missing enrollment directory for student ${student.studentId}: ${directory}`,
-      );
+      throw new Error(`Missing enrollment directory for student ${student.studentId}: ${directory}`);
     }
 
     const images = entries.filter(
-      (entry) =>
-        entry.isFile() && imageExtensions.has(path.extname(entry.name).toLowerCase()),
+      (entry) => entry.isFile() && imageExtensions.has(path.extname(entry.name).toLowerCase()),
     );
     if (images.length === 0) {
-      throw new Error(
-        `Enrollment directory for student ${student.studentId} must contain at least one image`,
-      );
+      throw new Error(`Enrollment directory for student ${student.studentId} must contain at least one image`);
     }
 
     for (const image of images) {
@@ -215,9 +197,7 @@ export async function validateEnrollmentDirectories(
         throw new Error(`Enrollment image is empty: ${imagePath}`);
       }
       if (!hasSupportedImageSignature(bytes)) {
-        throw new Error(
-          `Enrollment image is not a JPEG, PNG, BMP, or WebP file: ${imagePath}`,
-        );
+        throw new Error(`Enrollment image is not a JPEG, PNG, BMP, or WebP file: ${imagePath}`);
       }
     }
   }
@@ -250,7 +230,7 @@ export function parseTimetable(
     } else {
       throw new Error(
         `${sourceFile}: row ${line} has ${values.length} fields; expected ` +
-          `${timetableColumnsWithoutName.length} or ${timetableColumnsWithName.length}`,
+        `${timetableColumnsWithoutName.length} or ${timetableColumnsWithName.length}`,
       );
     }
     const row = Object.fromEntries(columns.map((column, at) => [column, values[at]]));
@@ -287,10 +267,9 @@ function entryKey(row: TimetableRow): string {
   return [row.room, row.courseCode, row.day, row.startTime, row.endTime, row.className, row.batch].join('|');
 }
 
-/**
- * Reports data problems that should not stop the import: the source timetables
- * contain repeated rows and slots where one room hosts two classes at once.
- */
+
+// Reports data problems that should not stop the import: the source timetables
+// contain repeated rows and slots where one room hosts two classes at once.
 export function timetableWarnings(timetable: TimetableRow[]): string[] {
   const warnings: string[] = [];
   const seen = new Map<string, TimetableRow>();
@@ -302,12 +281,12 @@ export function timetableWarnings(timetable: TimetableRow[]): string[] {
     if (previous) {
       warnings.push(
         `${row.sourceFile}: row ${row.sourceLine} repeats row ${previous.sourceLine} ` +
-          `(${row.courseCode} ${row.day} ${row.startTime}); only one entry is stored`,
+        `(${row.courseCode} ${row.day} ${row.startTime}); only one entry is stored`,
       );
       if (previous.facultyName !== row.facultyName) {
         warnings.push(
           `${row.sourceFile}: row ${row.sourceLine} names faculty "${row.facultyName}" ` +
-            `but row ${previous.sourceLine} names "${previous.facultyName}"`,
+          `but row ${previous.sourceLine} names "${previous.facultyName}"`,
         );
       }
     } else {
@@ -325,16 +304,14 @@ export function timetableWarnings(timetable: TimetableRow[]): string[] {
       const [room, day, startTime] = slot.split('|');
       warnings.push(
         `${room} is double-booked on ${day} at ${startTime}: ` +
-          rows.map((row) => `${row.courseCode}/${row.className}/${row.batch}`).join(', '),
+        rows.map((row) => `${row.courseCode}/${row.className}/${row.batch}`).join(', '),
       );
     }
   }
   return warnings;
 }
 
-export function deriveCoursesAndFacultyFromTimetable(
-  timetable: TimetableRow[],
-): { courses: CourseRow[]; faculty: FacultyRow[] } {
+export function deriveCoursesAndFacultyFromTimetable(timetable: TimetableRow[]): { courses: CourseRow[]; faculty: FacultyRow[] } {
   const coursesByCode = new Map<string, string | null>();
   const facultyNames = new Set<string>();
   for (const row of timetable) {
@@ -469,7 +446,7 @@ export async function importAcademicData(
         if (existing.rows[0].faculty_name !== entry.facultyName) {
           throw new Error(
             `${entry.sourceFile}: row ${entry.sourceLine} assigns "${entry.facultyName}" to a slot ` +
-              `already held by "${existing.rows[0].faculty_name as string}"`,
+            `already held by "${existing.rows[0].faculty_name as string}"`,
           );
         }
         continue;

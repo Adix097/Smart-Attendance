@@ -29,9 +29,6 @@ export default function SessionHeader({
   return (
     <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.12em] text-blue-700">
-          Faculty attendance
-        </p>
         <h1 className="mt-1 text-3xl font-bold tracking-tight">
           {selectedClass?.courseTitle ?? 'Smart Classroom Attendance'}
         </h1>
@@ -42,9 +39,8 @@ export default function SessionHeader({
 
       <div className="grid justify-items-start gap-2 sm:justify-items-end">
         <span
-          className={`rounded-full px-3 py-1 text-xs font-bold ${
-            session ? statusStyles[session.status] : 'bg-amber-100 text-amber-800'
-          }`}
+          className={`rounded-full px-3 py-1 text-xs font-bold ${session ? statusStyles[session.status] : 'bg-amber-100 text-amber-800'
+            }`}
         >
           {session ? statusLabels[session.status] : 'No session created'}
         </span>

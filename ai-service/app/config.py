@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, replace
 
-
 def _float_env(name: str, default: float) -> float:
     raw_value = os.getenv(name)
     if raw_value is None:
@@ -23,7 +22,6 @@ def _int_env(name: str, default: int) -> int:
     except ValueError as error:
         raise ValueError(f"{name} must be an integer") from error
 
-
 @dataclass(frozen=True)
 class InferenceConfig:
     model_name: str = os.getenv("AI_MODEL_NAME", "buffalo_l")
@@ -31,9 +29,7 @@ class InferenceConfig:
     sampling_fps: float = _float_env("AI_SAMPLING_FPS", 2.0)
     acceptance_threshold: float = _float_env("AI_ACCEPTANCE_THRESHOLD", 0.45)
     unknown_threshold: float = _float_env("AI_UNKNOWN_THRESHOLD", 0.35)
-    identity_margin_threshold: float = _float_env(
-        "AI_IDENTITY_MARGIN_THRESHOLD", 0.05
-    )
+    identity_margin_threshold: float = _float_env("AI_IDENTITY_MARGIN_THRESHOLD", 0.05)
     minimum_observations: int = _int_env("AI_MINIMUM_OBSERVATIONS", 3)
 
     def __post_init__(self) -> None:
@@ -48,9 +44,7 @@ class InferenceConfig:
         if not 0 <= self.acceptance_threshold <= 1:
             raise ValueError("acceptance_threshold must be between zero and one")
         if self.unknown_threshold > self.acceptance_threshold:
-            raise ValueError(
-                "unknown_threshold must not exceed acceptance_threshold"
-            )
+            raise ValueError("unknown_threshold must not exceed acceptance_threshold")
         if not 0 <= self.identity_margin_threshold <= 2:
             raise ValueError("identity_margin_threshold must be between zero and two")
         if self.minimum_observations < 1:
@@ -59,6 +53,5 @@ class InferenceConfig:
     def with_overrides(self, **overrides: object) -> InferenceConfig:
         values = {key: value for key, value in overrides.items() if value is not None}
         return replace(self, **values)
-
 
 settings = InferenceConfig()

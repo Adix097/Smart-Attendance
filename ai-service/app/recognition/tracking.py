@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from math import hypot
 from typing import Any, Iterable
 
-
 @dataclass(frozen=True)
 class Box:
     x: float
@@ -14,7 +13,7 @@ class Box:
 
 
 def box_from_face(face: Any) -> Box:
-    """Converts an InsightFace `[x1, y1, x2, y2]` bbox into an origin/size box."""
+    """Converts an InsightFace `[x1, y1, x2, y2]` box into an origin/size box."""
     return Box(
         x=float(face.bbox[0]),
         y=float(face.bbox[1]),
@@ -40,9 +39,8 @@ def _iou(first: Box, second: Box) -> float:
     return intersection / union if union else 0.0
 
 
+# Temporary per-video tracker
 class LightweightTracker:
-    """Temporary per-video tracker; replaceable by a full MOT implementation later."""
-
     def __init__(self, max_gap_frames: int = 8) -> None:
         self._tracks: list[_Track] = []
         self._next_id = 1
@@ -65,8 +63,7 @@ class LightweightTracker:
                     _iou(track.box, box) >= 0.2
                     or hypot(
                         (track.box.x + track.box.width / 2) - (box.x + box.width / 2),
-                        (track.box.y + track.box.height / 2)
-                        - (box.y + box.height / 2),
+                        (track.box.y + track.box.height / 2) - (box.y + box.height / 2),
                     )
                     <= max(track.box.width, track.box.height, box.width, box.height)
                 )
