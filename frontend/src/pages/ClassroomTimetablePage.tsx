@@ -1,3 +1,6 @@
+import { Link } from 'react-router-dom';
+
+import BackLink from '../components/BackLink';
 import ClassroomSelector from '../components/timetable/ClassroomSelector';
 import CurrentClassCard from '../components/timetable/CurrentClassCard';
 import LiveClock from '../components/timetable/LiveClock';
@@ -21,6 +24,7 @@ export default function ClassroomTimetablePage() {
 
   return (
     <main className="mx-auto max-w-6xl px-6 py-8">
+      <BackLink to="/" label="Back to home" />
       <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-medium text-slate-500">Classroom timetable</p>
@@ -37,12 +41,12 @@ export default function ClassroomTimetablePage() {
             selectedClassroomId={selectedClassroomId}
             onSelect={setSelectedClassroomId}
           />
-          <a
+          <Link
             className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
-            href="/attendance"
+            to="/attendance"
           >
             Take attendance
-          </a>
+          </Link>
         </div>
       </header>
 

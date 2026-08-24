@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import AttendanceTable from '../components/attendance/AttendanceTable';
 import ClassSelector from '../components/attendance/ClassSelector';
@@ -6,6 +7,7 @@ import EvidenceSummary from '../components/attendance/EvidenceSummary';
 import ReviewActions from '../components/attendance/ReviewActions';
 import SessionHeader from '../components/attendance/SessionHeader';
 import SessionStatus from '../components/attendance/SessionStatus';
+import BackLink from '../components/BackLink';
 import ClassroomSelector from '../components/timetable/ClassroomSelector';
 import { getClassrooms } from '../api/timetable';
 import type { Classroom } from '../api/types';
@@ -43,6 +45,7 @@ export default function AttendancePage() {
 
   return (
     <main className="mx-auto max-w-5xl px-5 py-8 text-slate-900 sm:py-10">
+      <BackLink to="/" label="Back to home" />
       <SessionHeader
         selectedClass={classSessions.selectedClass}
         session={attendance.session}
@@ -55,9 +58,9 @@ export default function AttendancePage() {
           selectedClassroomId={classroomId}
           onSelect={selectClassroom}
         />
-        <a className="text-sm font-semibold text-blue-700 hover:underline" href="/timetable">
+        <Link className="text-sm font-semibold text-blue-700 hover:underline" to="/timetable">
           View room timetable
-        </a>
+        </Link>
       </section>
       <ClassSelector
         classes={classSessions.classes}

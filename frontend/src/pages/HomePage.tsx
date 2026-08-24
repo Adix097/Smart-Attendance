@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom';
+
 export default function HomePage() {
   return (
     <main className="mx-auto max-w-5xl px-5 py-10 sm:py-28">
@@ -9,18 +11,18 @@ export default function HomePage() {
           Review provisional AI recognition before finalizing attendance.
         </p>
         <div className="flex flex-wrap gap-3">
-          <a
+          <Link
             className="inline-block rounded-lg bg-blue-700 px-4 py-3 font-medium text-white hover:bg-blue-800"
-            href="/attendance"
+            to="/attendance"
           >
             Open Attendance Page
-          </a>
-          <a
+          </Link>
+          <Link
             className="inline-block rounded-lg border border-slate-300 bg-white px-4 py-3 font-medium text-slate-900 hover:bg-slate-50"
-            href="/timetable"
+            to="/timetable"
           >
             Browse classroom timetables
-          </a>
+          </Link>
         </div>
       </section>
     </main>
