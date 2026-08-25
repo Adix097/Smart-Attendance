@@ -225,6 +225,26 @@ class MockAttendanceRepository implements AttendanceRepository {
     return Promise.resolve(stored);
   }
 
+  clearSessionInferenceArtifacts(attendanceSessionId: string): Promise<void> {
+    for (let index = this.observations.length - 1; index >= 0; index -= 1) {
+      if (this.observations[index].attendanceSessionId === attendanceSessionId) {
+        this.observations.splice(index, 1);
+      }
+    }
+    for (let index = this.sightings.length - 1; index >= 0; index -= 1) {
+      if (this.sightings[index].attendanceSessionId === attendanceSessionId) {
+        this.sightings.splice(index, 1);
+      }
+    }
+    this.occupancy.length = 0;
+    for (const [id, record] of [...this.records.entries()]) {
+      if (record.attendanceSessionId === attendanceSessionId && !record.finalizedAt) {
+        this.records.delete(id);
+      }
+    }
+    return Promise.resolve();
+  }
+
   upsertProvisionalAttendance(input: ProvisionalAttendanceInput): Promise<AttendanceRecord> {
     const existing = [...this.records.values()].find(
       (record) =>
@@ -565,6 +585,69 @@ describe('attendance session API', () => {
     assert.equal(response.status, 200);
     assert.equal(body.record.status, 'present');
     assert.equal(body.record.finalizedBy, 'faculty-demo');
+  });
+
+  it('re-processes a completed session instead of returning stale evidence', async () => {
+    const sessionId = [...repository.sessions.keys()][0];
+    await repository.updateAttendanceSessionStatus(sessionId, 'ready_for_review', null);
+    repository.observations.length = 0;
+    repository.observations.push({
+      id: 'stale-obs',
+      attendanceSessionId: sessionId,
+      studentId: 'student-a',
+      status: 'confirmed',
+      similarity: 0.777,
+      observationCount: 15,
+      secondBestSimilarity: 0.2,
+      identityMargin: 0.556,
+      evidence: {},
+      modelName: 'buffalo_sc',
+      modelVersion: '1.0.1',
+    });
+
+    let calls = 0;
+    await stopBackend();
+    await startBackend(async () => {
+      calls += 1;
+      return {
+        ...inferenceResponse,
+        results: [
+          {
+            identity: 'student-b',
+            status: 'confirmed',
+            observation_count: 4,
+            best_similarity: 0.91,
+            average_similarity: 0.9,
+            second_best_similarity: 0.1,
+            identity_margin: 0.8,
+          },
+        ],
+        sightings: [
+          {
+            timestamp_seconds: 1,
+            tracker_id: 't1',
+            identity: 'student-b',
+            status: 'confirmed',
+            best_similarity: 0.91,
+            second_best_similarity: 0.1,
+            identity_margin: 0.8,
+          },
+        ],
+      };
+    });
+
+    const response = await postJson(`/api/attendance-sessions/${sessionId}/process`, {
+      video_path: 'C:\\demo\\other.mp4',
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(calls, 1, 'AI must run again for a completed session');
+    assert.equal(body.observation_count, 1);
+    assert.equal(repository.observations.length, 1);
+    assert.equal(repository.observations[0].studentId, 'student-b');
+    assert.equal(repository.observations[0].similarity, 0.91);
+    assert.ok(!repository.observations.some((item) => item.id === 'stale-obs'));
   });
 
   it('forwards an uploaded recording as bytes rather than a backend file path', async () => {

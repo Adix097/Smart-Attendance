@@ -312,8 +312,22 @@ export function createAttendanceRouter({
     const session = await findSession(request.params.id, response);
     if (!session) return;
 
-    if (session.status === 'ready_for_review' || session.status === 'finalized') {
-      response.json({ session: sessionResponse(session), observation_count: 0 });
+    if (session.status === 'finalized') {
+      sendError(
+        response,
+        409,
+        'SESSION_FINALIZED',
+        'This attendance session is finalized and cannot be processed again',
+      );
+      return;
+    }
+    if (session.status === 'processing') {
+      sendError(
+        response,
+        409,
+        'SESSION_BUSY',
+        'This attendance session is already processing a video',
+      );
       return;
     }
 
@@ -400,6 +414,10 @@ export function createAttendanceRouter({
       if (inference.errors.length > 0) {
         throw new Error(inference.errors.join('; '));
       }
+
+      // Drop prior AI evidence so a new upload cannot leave stale observations
+      // (same similarity/counts) on the review page.
+      await repository.clearSessionInferenceArtifacts(session.id);
 
       const sightings = resolveSightings(
         inference,

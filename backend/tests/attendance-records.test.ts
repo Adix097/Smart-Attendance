@@ -82,6 +82,23 @@ class MockAttendanceRepository implements AttendanceRepository {
     return Promise.resolve(observations);
   }
 
+  clearSessionInferenceArtifacts(attendanceSessionId: string): Promise<void> {
+    for (let index = this.observations.length - 1; index >= 0; index -= 1) {
+      if (this.observations[index].attendanceSessionId === attendanceSessionId) {
+        this.observations.splice(index, 1);
+      }
+    }
+    for (let index = this.records.length - 1; index >= 0; index -= 1) {
+      if (
+        this.records[index].attendanceSessionId === attendanceSessionId &&
+        !this.records[index].finalizedAt
+      ) {
+        this.records.splice(index, 1);
+      }
+    }
+    return Promise.resolve();
+  }
+
   async upsertProvisionalAttendance(
     input: ProvisionalAttendanceInput,
   ): Promise<AttendanceRecord> {

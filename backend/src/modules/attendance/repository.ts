@@ -567,6 +567,35 @@ export class PgAttendanceRepository implements AttendanceRepository {
     return stored;
   }
 
+  async clearSessionInferenceArtifacts(
+    attendanceSessionId: string,
+  ): Promise<void> {
+    // Order respects FKs: provisional records may reference observations.
+    await this.database.query(
+      `DELETE FROM attendance_records
+       WHERE attendance_session_id = $1 AND finalized_at IS NULL`,
+      [attendanceSessionId],
+    );
+    await this.database.query(
+      `UPDATE attendance_records
+       SET evidence_observation_id = NULL
+       WHERE attendance_session_id = $1`,
+      [attendanceSessionId],
+    );
+    await this.database.query(
+      `DELETE FROM attendance_sightings WHERE attendance_session_id = $1`,
+      [attendanceSessionId],
+    );
+    await this.database.query(
+      `DELETE FROM occupancy_snapshots WHERE attendance_session_id = $1`,
+      [attendanceSessionId],
+    );
+    await this.database.query(
+      `DELETE FROM attendance_observations WHERE attendance_session_id = $1`,
+      [attendanceSessionId],
+    );
+  }
+
   async upsertProvisionalAttendance(
     input: ProvisionalAttendanceInput,
   ): Promise<AttendanceRecord> {

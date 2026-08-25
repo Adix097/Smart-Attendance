@@ -183,6 +183,8 @@ export interface AttendanceRepository {
     attendanceSessionId: string,
     observations: AIObservationInput[],
   ): Promise<AttendanceObservation[]>;
+  /** Drop prior AI evidence so a session can be re-processed with a new video. */
+  clearSessionInferenceArtifacts(attendanceSessionId: string): Promise<void>;
   upsertProvisionalAttendance(
     input: ProvisionalAttendanceInput,
   ): Promise<AttendanceRecord>;

@@ -69,7 +69,7 @@ export default function useAttendance(selectedClassId: string) {
       setBusy(false);
       return;
     }
-    if (session?.class_session_id === selectedClassId) {
+    if (session?.class_session_id === selectedClassId && session.status === 'pending') {
       setBusy(false);
       return;
     }
@@ -77,6 +77,7 @@ export default function useAttendance(selectedClassId: string) {
       setSession(await createAttendanceSession(selectedClassId));
       setObservations([]);
       setRecords([]);
+      setReviewStatus({});
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to create session');
     } finally {
@@ -88,6 +89,9 @@ export default function useAttendance(selectedClassId: string) {
     if (!session) return;
     setBusy(true);
     setError('');
+    setObservations([]);
+    setRecords([]);
+    setReviewStatus({});
     setSession({ ...session, status: 'processing', error: null });
     try {
       if (!source) throw new Error('Select a recorded video or start the live camera before processing.');
