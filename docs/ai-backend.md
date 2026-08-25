@@ -30,7 +30,7 @@ Content-Type: application/json
 {
   "video_path": "/shared/classroom.mp4",
   "enrollment_dir": "/path/used-only-in-local-mode",
-  "model_name": "buffalo_l",
+  "model_name": "buffalo_sc",
   "sampling_fps": 2.0
 }
 ```

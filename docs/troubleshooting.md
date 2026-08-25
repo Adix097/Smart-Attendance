@@ -33,9 +33,12 @@ Symptoms: intermittent HTTP 502/503/504, long first request.
 | HTTP 502 after ~30–100s with large video | Render proxy timeout or OOM kill during inference |
 | Backend message `AI service returned HTTP 502` + sanitized `Upstream: …` | Backend correctly saw a non-2xx from the AI hop (not inventing 502) |
 
-Check AI service logs for `inference_request` → `temp_video_created` → `video_processing_start`. If logs stop mid-flight and the instance restarts, treat it as OOM/timeout, not a FastAPI validation bug.
+Check AI service logs for `inference_request` → `temp_video_created` → `video_processing_start`. If logs stop mid-flight and the service restarts with `Out of memory (used over 512Mi)`, the model pack is too heavy:
 
-Also confirm the backend was redeployed to send multipart to `/v1/inference/upload` and the AI service includes `python-multipart`.
+- Set `AI_MODEL_NAME=buffalo_sc` (default in current code).
+- Keep `AI_ALLOW_HEAVY_MODELS=false`.
+- Confirm `/health` reports `model_name=buffalo_sc` and `rss_mb` well under 512 after preload.
+- Redeploy the AI service after changing the model so InsightFace downloads `buffalo_sc` and rebuilds the gallery cache.
 
 ## Supabase authentication failure (Storage)
 

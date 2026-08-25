@@ -47,22 +47,34 @@ def _empty_failure_response(config: InferenceConfig, errors: list[str]) -> Infer
     )
 
 
-@lru_cache(maxsize=1)
-def _analysis_for(config: InferenceConfig):
+@lru_cache(maxsize=2)
+def _analysis_for(model_name: str, provider: str, det_size: int):
+    """Cache by model identity only — threshold overrides must not reload weights."""
+    config = InferenceConfig(
+        model_name=model_name,
+        provider=provider,
+        det_size=det_size,
+    )
     log_event(
         "model_init_begin",
-        model_name=config.model_name,
-        provider=config.provider,
+        model_name=model_name,
+        provider=provider,
+        det_size=det_size,
         rss_mb=rss_mb(),
     )
     analysis = build_analysis(config)
     log_event(
         "model_init_complete",
-        model_name=config.model_name,
-        provider=config.provider,
+        model_name=model_name,
+        provider=provider,
+        det_size=det_size,
         rss_mb=rss_mb(),
     )
     return analysis
+
+
+def _get_analysis(config: InferenceConfig):
+    return _analysis_for(config.model_name, config.provider, config.det_size)
 
 
 def _preload() -> None:
@@ -78,12 +90,13 @@ def _preload() -> None:
         model_name=settings.model_name,
         rss_mb=rss_mb(),
     )
-    analysis = _analysis_for(settings)
+    analysis = _get_analysis(settings)
     if enrollment_settings.source != "supabase":
         log_event(
             "preload_complete",
             enrollment_source=enrollment_settings.source,
             gallery="skipped_local",
+            model_name=settings.model_name,
             rss_mb=rss_mb(),
         )
         return
@@ -100,6 +113,7 @@ def _preload() -> None:
         identities=len(gallery.embeddings),
         accepted_images=gallery.accepted_images,
         rejected_images=gallery.rejected_images,
+        model_name=settings.model_name,
         rss_mb=rss_mb(),
     )
 
@@ -167,7 +181,7 @@ def _execute_inference(
         model_name=config.model_name,
         rss_mb=rss_mb(),
     )
-    analysis = _analysis_for(config)
+    analysis = _get_analysis(config)
     log_event(
         "gallery_load_begin",
         enrollment_source=enrollment_settings.source,
@@ -249,6 +263,8 @@ def health() -> dict[str, Any]:
         "service": "ai-service",
         "enrollment_source": enrollment_settings.source,
         "model_cached": _analysis_for.cache_info().currsize > 0,
+        "model_name": settings.model_name,
+        "det_size": settings.det_size,
         "rss_mb": rss_mb(),
     }
 
@@ -336,11 +352,15 @@ async def inference_upload(
     )
     try:
         with resolved_video_bytes(filename, payload) as video_path:
+            # Drop the in-memory upload once it lives on disk so inference peak
+            # does not keep a second full copy of the recording.
+            payload_size = len(payload)
+            del payload
             return _execute_inference(
                 video_path=video_path,
                 enrollment_dir=Path(enrollment_dir),
                 config=config,
-                video_bytes=len(payload),
+                video_bytes=payload_size,
                 transport="multipart",
             )
     except (OSError, RuntimeError, ValueError, MemoryError) as error:
@@ -352,7 +372,7 @@ def recognition_test(request: RecognitionTestRequest) -> RecognitionTestResponse
     if not _dev_harness_enabled():
         raise HTTPException(status_code=404, detail="Development harness is disabled")
     try:
-        analysis = _analysis_for(settings)
+        analysis = _get_analysis(settings)
         return run_recognition_test(
             image_path=Path(request.image_path),
             enrollment_dir=Path(request.enrollment_dir),

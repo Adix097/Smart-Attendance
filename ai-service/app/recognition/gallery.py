@@ -56,16 +56,19 @@ def load_gallery(analysis: Any, enrollment_dir: Path) -> EnrollmentGallery:
             faces = analysis.get(image)
             if len(faces) != 1:
                 rejected_images += 1
+                del image
                 continue
 
             try:
                 embedding = normalize_embedding(faces[0].embedding)
             except ValueError:
                 rejected_images += 1
+                del image, faces
                 continue
 
             embeddings.setdefault(person_dir.name, []).append(embedding)
             accepted_images += 1
+            del image, faces
 
     if not embeddings:
         raise ValueError("No usable enrollment embeddings were extracted")

@@ -19,13 +19,13 @@ FastAPI app that only does recognition. It does not write attendance to Postgres
 1. **Startup preload** warms InsightFace (and the Supabase gallery when configured) so the first upload is not also paying model + sync cost.
 2. **Request arrives** as multipart file bytes (`/v1/inference/upload`) or JSON `video_path` / base64 (`/v1/inference`).
 3. **Video is materialized** on the AI host (`video_source.py`). Uploads are written to a temp file and deleted afterward. Separate Render disks mean a backend temp path is useless unless the bytes are sent.
-4. **FaceAnalysis model loads** (InsightFace `buffalo_l` by default) on CPU via ONNX Runtime. The prepared model is cached in-process after first use / preload.
+4. **FaceAnalysis model loads** (InsightFace `buffalo_sc` by default) on CPU via ONNX Runtime with only `detection` + `recognition` modules. The prepared model is cached in-process after first use / preload.
 5. **Enrollment gallery loads**
    - `local`: read folders under `enrollment_dir`
    - `supabase`: sync private bucket into a cache dir once, then reuse in memory until refresh
 6. For each enrollment image with exactly one face, compute a normalized embedding vector.
-7. **Open the video**, sample frames at about `AI_SAMPLING_FPS` (default 2 fps).
-8. On each sampled frame, detect faces.
+7. **Open the video**, skip non-sampled frames with `grab()` (no decode), sample at about `AI_SAMPLING_FPS` (default 2 fps).
+8. Downscale oversized frames before detection; on each sampled frame, detect faces.
 9. For each face embedding, **match** against the gallery (cosine similarity = dot product of normalized vectors).
 10. Apply thresholds → status per sighting: `confirmed` / `uncertain` / `unknown`.
 11. Track faces roughly across frames (`LightweightTracker`).
@@ -56,8 +56,23 @@ Configured in `app/config.py` / env:
 | `AI_IDENTITY_MARGIN_THRESHOLD` | `0.05` | Best vs second-best must differ by at least this or stay uncertain (avoids close twins) |
 | `AI_MINIMUM_OBSERVATIONS` | `3` | Need enough sightings before aggregate status can stay `confirmed` |
 | `AI_SAMPLING_FPS` | `2.0` | How often frames are taken from the video |
-| `AI_MODEL_NAME` | `buffalo_l` | InsightFace model pack |
+| `AI_MODEL_NAME` | `buffalo_sc` | InsightFace pack. Use `buffalo_sc` on Render free (512MiB). |
+| `AI_DET_SIZE` | `320` | Detector input square edge (lower = less RAM). |
+| `AI_MAX_DETECTION_SIDE` | `960` | Longest frame side before detection resize. |
+| `AI_ALLOW_HEAVY_MODELS` | `false` | Set `true` only on larger instances to allow `buffalo_l`. |
 | `AI_PROVIDER` | `CPUExecutionProvider` | This project supports CPU only |
+
+### Memory note (Render 512MiB)
+
+Measured process RSS on CPU (approx, before FastAPI/video):
+
+| Pack | On-disk ONNX | RSS after prepare + one 720p frame |
+| --- | --- | --- |
+| `buffalo_l` (all modules, det 640) | ~326MB | ~480–490MiB — **exceeds 512MiB once the web stack + video land** |
+| `buffalo_l` (det+rec only, det 320) | still ~280MiB of SCRFD-10G + R50 | ~300MiB — too tight for production inference |
+| `buffalo_sc` (det+rec, det 320) | ~16MB | ~110–150MiB — fits 512MiB with headroom |
+
+`buffalo_sc` uses the same MobileFaceNet recognition backbone as `buffalo_s` (MR-ALL 71.87 vs `buffalo_l` 91.25). Thresholds are unchanged; recalibrate only if real classroom footage shows more false negatives.
 
 Rough status logic per sighting:
 

@@ -38,13 +38,21 @@ def _int_env(name: str, default: int) -> int:
 
 @dataclass(frozen=True)
 class InferenceConfig:
-    model_name: str = os.getenv("AI_MODEL_NAME", "buffalo_l")
+    # buffalo_l (~326MB weights) cannot reliably share a 512MiB Render instance with
+    # Python + ONNX Runtime + OpenCV. buffalo_sc (~16MB) keeps the same MobileFaceNet
+    # recognition backbone as buffalo_s with detection-only extras stripped.
+    model_name: str = os.getenv("AI_MODEL_NAME", "buffalo_sc")
     provider: str = os.getenv("AI_PROVIDER", "CPUExecutionProvider")
     sampling_fps: float = _float_env("AI_SAMPLING_FPS", 2.0)
     acceptance_threshold: float = _float_env("AI_ACCEPTANCE_THRESHOLD", 0.45)
     unknown_threshold: float = _float_env("AI_UNKNOWN_THRESHOLD", 0.35)
     identity_margin_threshold: float = _float_env("AI_IDENTITY_MARGIN_THRESHOLD", 0.05)
     minimum_observations: int = _int_env("AI_MINIMUM_OBSERVATIONS", 3)
+    # Detector input square edge. 640 is InsightFace's default and expensive;
+    # 320 fits SCRFD-500M classroom frames with far less activation memory.
+    det_size: int = _int_env("AI_DET_SIZE", 320)
+    # Longest frame side kept before detection. Larger HD frames are resized down.
+    max_detection_side: int = _int_env("AI_MAX_DETECTION_SIDE", 960)
 
     def __post_init__(self) -> None:
         if not self.model_name:
@@ -63,10 +71,19 @@ class InferenceConfig:
             raise ValueError("identity_margin_threshold must be between zero and two")
         if self.minimum_observations < 1:
             raise ValueError("minimum_observations must be at least one")
+        if self.det_size < 128 or self.det_size > 1280:
+            raise ValueError("det_size must be between 128 and 1280")
+        if self.max_detection_side < self.det_size:
+            raise ValueError("max_detection_side must be at least det_size")
 
     def with_overrides(self, **overrides: object) -> InferenceConfig:
         values = {key: value for key, value in overrides.items() if value is not None}
         return replace(self, **values)
+
+    @property
+    def analysis_cache_key(self) -> tuple[str, str, int]:
+        """Model identity only — thresholds must not reload InsightFace."""
+        return (self.model_name, self.provider, self.det_size)
 
 @dataclass(frozen=True)
 class EnrollmentConfig:

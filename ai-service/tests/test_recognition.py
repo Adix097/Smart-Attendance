@@ -98,6 +98,28 @@ class RecognitionTests(unittest.TestCase):
         ids = tracker.update([Box(0, 0, 10, 10), Box(100, 100, 10, 10)], 0)
         self.assertEqual(len(set(ids)), 2)
 
+    def test_heavy_models_are_rejected_on_the_512mib_budget(self) -> None:
+        from app.pipelines.recognition import build_analysis
+
+        with self.assertRaisesRegex(ValueError, "too large for a 512MiB instance"):
+            build_analysis(config(model_name="buffalo_l"))
+
+    def test_downscales_oversized_frames_for_detection(self) -> None:
+        from app.pipelines.recognition import _downscale_for_detection
+
+        frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        resized, scale = _downscale_for_detection(frame, max_side=960)
+        self.assertLess(scale, 1.0)
+        self.assertEqual(max(resized.shape[0], resized.shape[1]), 960)
+
+    def test_skips_downscale_when_frame_already_small(self) -> None:
+        from app.pipelines.recognition import _downscale_for_detection
+
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        resized, scale = _downscale_for_detection(frame, max_side=960)
+        self.assertEqual(scale, 1.0)
+        self.assertIs(resized, frame)
+
 
 if __name__ == "__main__":
     unittest.main()

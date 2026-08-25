@@ -22,8 +22,11 @@ Placeholders only. Never commit real secrets.
 | --- | --- |
 | `HOST` | Listen address. Default `0.0.0.0`. |
 | `PORT` | Default `8000` locally; Render provides `PORT`. |
-| `AI_MODEL_NAME` | InsightFace model pack. Default `buffalo_l`. |
+| `AI_MODEL_NAME` | InsightFace model pack. Default `buffalo_sc` (fits 512MiB). |
 | `AI_PROVIDER` | Must be `CPUExecutionProvider` for this MVP. |
+| `AI_DET_SIZE` | Detector square edge. Default `320`. |
+| `AI_MAX_DETECTION_SIDE` | Max frame side before detection resize. Default `960`. |
+| `AI_ALLOW_HEAVY_MODELS` | Exact `true` allows `buffalo_l` / `buffalo_m` / `antelopev2` (needs >512MiB). |
 | `AI_SAMPLING_FPS` | Frame sampling rate. Default `2.0`. |
 | `AI_ACCEPTANCE_THRESHOLD` | Default `0.45`. |
 | `AI_UNKNOWN_THRESHOLD` | Default `0.35`. |
@@ -51,6 +54,8 @@ DATABASE_URL=postgresql://USER:PASSWORD@db.example:5432/postgres
 APP_TIMEZONE=Asia/Kolkata
 
 # ai-service production-ish
+AI_MODEL_NAME=buffalo_sc
+AI_DET_SIZE=320
 ENROLLMENT_SOURCE=supabase
 SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=YOUR_SERVER_SIDE_SECRET
