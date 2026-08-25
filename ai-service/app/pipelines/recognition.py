@@ -216,6 +216,21 @@ def run_video_inference(
 
             faces = analysis.get(detect_frame)
             detected_faces += len(faces)
+            # Sampled-frame probe: confirms whether SCRFD sees multiple faces on
+            # classroom frames (zero unknown/uncertain usually means zero detections,
+            # not recognition rejection). Throttled to avoid log spam.
+            if sampled_frames % 5 == 1:
+                height, width = detect_frame.shape[:2]
+                log_event(
+                    "frame_detection",
+                    frame_index=frame_index,
+                    sampled_frames=sampled_frames,
+                    faces=len(faces),
+                    detect_width=width,
+                    detect_height=height,
+                    det_size=config.det_size,
+                    scale=round(scale, 4),
+                )
             inv = 1.0 / scale
             boxes: list[Box] = []
             for face in faces:

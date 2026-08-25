@@ -48,8 +48,13 @@ class InferenceConfig:
     unknown_threshold: float = _float_env("AI_UNKNOWN_THRESHOLD", 0.35)
     identity_margin_threshold: float = _float_env("AI_IDENTITY_MARGIN_THRESHOLD", 0.05)
     minimum_observations: int = _int_env("AI_MINIMUM_OBSERVATIONS", 3)
-    # Detector input square edge. 640 is InsightFace's default and expensive;
-    # 320 fits SCRFD-500M classroom frames with far less activation memory.
+    # Detector input square edge (env: AI_DET_SIZE). 320 is the memory-safe
+    # default for Render free (512MiB). InsightFace's default is 640 — raising
+    # AI_DET_SIZE=640 improves small/far-face recall at the cost of more RAM.
+    # Test via env override on an instance with headroom (check rss_mb on
+    # /health after preload) before treating 640 as a hardcoded default.
+    # AI_MAX_DETECTION_SIDE likewise overrides the longest frame side kept
+    # before detection (default 960).
     det_size: int = _int_env("AI_DET_SIZE", 320)
     # Longest frame side kept before detection. Larger HD frames are resized down.
     max_detection_side: int = _int_env("AI_MAX_DETECTION_SIDE", 960)
