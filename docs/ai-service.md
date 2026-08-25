@@ -8,27 +8,29 @@ FastAPI app that only does recognition. It does not write attendance to Postgres
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/health` | Alive + `enrollment_source` |
-| POST | `/v1/inference` | Main video recognition |
+| GET | `/health` | Alive + `enrollment_source` + model cache / RSS hints |
+| POST | `/v1/inference/upload` | Production video recognition (multipart file) |
+| POST | `/v1/inference` | JSON path / base64 recognition (local / compatibility) |
 | POST | `/v1/enrollment/refresh` | Re-download gallery from Supabase / clear caches |
 | POST | `/v1/dev/recognition-test` | Local harness only if `AI_ENABLE_DEV_HARNESS=true` |
 
 ## Recognition process (simple)
 
-1. **Request arrives** with either a filesystem `video_path` or `video_filename` + `video_data_base64`, plus `enrollment_dir`.
-2. **Video is materialized** on the AI host (`video_source.py`). Uploads are written to a temp file and deleted afterward. Separate Render disks mean a backend temp path is useless unless the bytes are sent.
-3. **FaceAnalysis model loads** (InsightFace `buffalo_l` by default) on CPU via ONNX Runtime. The prepared model is cached in-process.
-4. **Enrollment gallery loads**
+1. **Startup preload** warms InsightFace (and the Supabase gallery when configured) so the first upload is not also paying model + sync cost.
+2. **Request arrives** as multipart file bytes (`/v1/inference/upload`) or JSON `video_path` / base64 (`/v1/inference`).
+3. **Video is materialized** on the AI host (`video_source.py`). Uploads are written to a temp file and deleted afterward. Separate Render disks mean a backend temp path is useless unless the bytes are sent.
+4. **FaceAnalysis model loads** (InsightFace `buffalo_l` by default) on CPU via ONNX Runtime. The prepared model is cached in-process after first use / preload.
+5. **Enrollment gallery loads**
    - `local`: read folders under `enrollment_dir`
    - `supabase`: sync private bucket into a cache dir once, then reuse in memory until refresh
-5. For each enrollment image with exactly one face, compute a normalized embedding vector.
-6. **Open the video**, sample frames at about `AI_SAMPLING_FPS` (default 2 fps).
-7. On each sampled frame, detect faces.
-8. For each face embedding, **match** against the gallery (cosine similarity = dot product of normalized vectors).
-9. Apply thresholds → status per sighting: `confirmed` / `uncertain` / `unknown`.
-10. Track faces roughly across frames (`LightweightTracker`).
-11. **Aggregate** sightings per identity (counts, best/average similarity, margins).
-12. Return JSON results + warnings. Application failures usually come back as HTTP 200 with `errors[]` filled, not as a thrown 500.
+6. For each enrollment image with exactly one face, compute a normalized embedding vector.
+7. **Open the video**, sample frames at about `AI_SAMPLING_FPS` (default 2 fps).
+8. On each sampled frame, detect faces.
+9. For each face embedding, **match** against the gallery (cosine similarity = dot product of normalized vectors).
+10. Apply thresholds → status per sighting: `confirmed` / `uncertain` / `unknown`.
+11. Track faces roughly across frames (`LightweightTracker`).
+12. **Aggregate** sightings per identity (counts, best/average similarity, margins).
+13. Return JSON results + warnings. Application failures usually come back as HTTP 200 with `errors[]` filled, not as a thrown 500. Platform 502s are outside FastAPI.
 
 ## What “similarity” means
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from app.schemas import InferenceRequest
-from app.video_source import resolved_video
+from app.video_source import resolved_video, resolved_video_bytes
 
 
 class InferenceRequestVideoTests(unittest.TestCase):
@@ -83,6 +83,18 @@ class ResolvedVideoTests(unittest.TestCase):
     def test_rejects_an_empty_upload(self) -> None:
         with self.assertRaisesRegex(ValueError, "empty"):
             with resolved_video(None, "classroom.mp4", ""):
+                pass
+
+    def test_writes_raw_multipart_bytes(self) -> None:
+        with resolved_video_bytes("classroom.mp4", b"raw-bytes") as path:
+            self.assertTrue(path.is_file())
+            self.assertEqual(path.read_bytes(), b"raw-bytes")
+            written = path
+        self.assertFalse(written.exists())
+
+    def test_rejects_empty_multipart_bytes(self) -> None:
+        with self.assertRaisesRegex(ValueError, "empty"):
+            with resolved_video_bytes("classroom.mp4", b""):
                 pass
 
     def test_rejects_a_request_with_no_source(self) -> None:

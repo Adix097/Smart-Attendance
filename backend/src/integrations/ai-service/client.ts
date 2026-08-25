@@ -21,6 +21,8 @@ export class AIServiceError extends Error {
     message: string,
     public readonly statusCode?: number,
     public readonly retryable = false,
+    /** Sanitized upstream body snippet (never credentials or video bytes). */
+    public readonly upstreamBody: string | null = null,
   ) {
     super(message);
     this.name = 'AIServiceError';
@@ -35,6 +37,8 @@ interface RequestOptions {
   logContext?: Record<string, string | number | boolean | null>;
   logger?: Pick<Console, 'error' | 'warn'>;
   retryDelayMs?: number;
+  /** Override for tests: max elapsed ms before a gateway failure skips retry. */
+  gatewayRetryBudgetMs?: number;
 }
 
 /** Statuses a managed platform returns while a service is asleep, booting, or restarting. */
@@ -44,6 +48,12 @@ const defaultRetryDelayMs = 10_000;
 const wakeAttempts = 3;
 const wakeTimeoutMs = 10_000;
 const bodySnippetLimit = 500;
+/**
+ * Gateway retries help cold starts. A 502 after a long wait usually means the
+ * platform killed an in-flight inference (proxy timeout / OOM). Retrying then
+ * doubles load and rarely recovers — only retry fast failures.
+ */
+const gatewayRetryBudgetMs = 45_000;
 
 /** Strips any credentials so the target can be logged safely. */
 export function safeAiServiceOrigin(baseUrl: string): string {
@@ -53,6 +63,29 @@ export function safeAiServiceOrigin(baseUrl: string): string {
   } catch {
     return 'invalid-ai-service-url';
   }
+}
+
+/**
+ * Removes obvious credential/material patterns from an upstream error body so
+ * it can be attached to logs and user-facing error messages.
+ */
+export function sanitizeUpstreamBody(raw: string, limit = bodySnippetLimit): string {
+  let cleaned = raw
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
+    .replace(/data:video\/[^;]+;base64,[A-Za-z0-9+/=]+/gi, 'data:video/[redacted]')
+    .replace(/\b[A-Za-z0-9+/]{200,}={0,2}\b/g, '[base64-redacted]');
+
+  // Repeat until stable so nested `"Authorization":"…","apikey":"…"` forms clear.
+  for (let pass = 0; pass < 4; pass += 1) {
+    const next = cleaned.replace(
+      /("?(?:authorization|apikey|api[_-]?key|service[_-]?role|password|secret|token)"?\s*[:=]\s*)("[^"]*"|'[^']*'|[A-Za-z0-9._~+/=-]+)/gi,
+      '$1[redacted]',
+    );
+    if (next === cleaned) break;
+    cleaned = next;
+  }
+
+  return cleaned.replace(/\s+/g, ' ').trim().slice(0, limit);
 }
 
 function isLoopbackHost(baseUrl: string): boolean {
@@ -222,6 +255,98 @@ const isAIInferenceResponse = (
   );
 };
 
+function optionalFormField(
+  form: FormData,
+  key: string,
+  value: string | number | undefined,
+): void {
+  if (value === undefined) return;
+  form.append(key, String(value));
+}
+
+/**
+ * Build the outbound inference request. Uploads go as multipart so the AI
+ * service does not pay a second base64 expansion on top of InsightFace.
+ * Path-only local requests stay JSON.
+ */
+export function buildInferenceHttpRequest(request: AIInferenceRequest): {
+  path: string;
+  headers?: Record<string, string>;
+  body: BodyInit;
+  transport: 'multipart' | 'json';
+  videoBytes: number;
+} {
+  if (request.video_data_base64 && request.video_filename) {
+    const bytes = Buffer.from(request.video_data_base64, 'base64');
+    const form = new FormData();
+    form.append(
+      'video',
+      new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }),
+      request.video_filename,
+    );
+    form.append('enrollment_dir', request.enrollment_dir);
+    optionalFormField(form, 'model_name', request.model_name);
+    optionalFormField(form, 'provider', request.provider);
+    optionalFormField(form, 'sampling_fps', request.sampling_fps);
+    optionalFormField(form, 'acceptance_threshold', request.acceptance_threshold);
+    optionalFormField(form, 'unknown_threshold', request.unknown_threshold);
+    optionalFormField(
+      form,
+      'identity_margin_threshold',
+      request.identity_margin_threshold,
+    );
+    optionalFormField(form, 'minimum_observations', request.minimum_observations);
+    return {
+      path: '/v1/inference/upload',
+      body: form,
+      transport: 'multipart',
+      videoBytes: bytes.byteLength,
+    };
+  }
+
+  const jsonBody: Record<string, unknown> = {
+    enrollment_dir: request.enrollment_dir,
+  };
+  if (request.video_path) jsonBody.video_path = request.video_path;
+  if (request.model_name !== undefined) jsonBody.model_name = request.model_name;
+  if (request.provider !== undefined) jsonBody.provider = request.provider;
+  if (request.sampling_fps !== undefined) jsonBody.sampling_fps = request.sampling_fps;
+  if (request.acceptance_threshold !== undefined) {
+    jsonBody.acceptance_threshold = request.acceptance_threshold;
+  }
+  if (request.unknown_threshold !== undefined) {
+    jsonBody.unknown_threshold = request.unknown_threshold;
+  }
+  if (request.identity_margin_threshold !== undefined) {
+    jsonBody.identity_margin_threshold = request.identity_margin_threshold;
+  }
+  if (request.minimum_observations !== undefined) {
+    jsonBody.minimum_observations = request.minimum_observations;
+  }
+
+  return {
+    path: '/v1/inference',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(jsonBody),
+    transport: 'json',
+    videoBytes: 0,
+  };
+}
+
+function gatewayErrorMessage(
+  status: number,
+  elapsedMs: number,
+  snippet: string,
+  retryBudgetMs: number,
+): string {
+  const hint =
+    elapsedMs >= retryBudgetMs
+      ? 'The platform likely terminated a long-running inference (proxy timeout or out-of-memory).'
+      : 'It may be starting up after being idle, restarting, or rejecting oversized bodies.';
+  const detail = snippet ? ` Upstream: ${snippet}` : '';
+  return `AI service returned HTTP ${status}. ${hint}${detail}`;
+}
+
 export async function requestAIInference(
   request: AIInferenceRequest,
   options: RequestOptions = {},
@@ -231,13 +356,20 @@ export async function requestAIInference(
   const fetchImpl = options.fetchImpl ?? fetch;
   const logger = options.logger ?? console;
   const retryDelayMs = options.retryDelayMs ?? defaultRetryDelayMs;
+  const retryBudgetMs = options.gatewayRetryBudgetMs ?? gatewayRetryBudgetMs;
   const target = safeAiServiceOrigin(baseUrl);
-  const endpoint = `${baseUrl.replace(/\/$/, '')}/v1/inference`;
-  // The payload carries the recording, so only its shape is ever logged.
+  const prepared = buildInferenceHttpRequest(request);
+  const endpoint = `${baseUrl.replace(/\/$/, '')}${prepared.path}`;
   const shape = {
     ...options.logContext,
     target,
-    video_source: request.video_data_base64 ? 'upload' : 'path',
+    transport: prepared.transport,
+    video_source: request.video_data_base64
+      ? 'upload'
+      : request.video_path
+        ? 'path'
+        : 'none',
+    video_bytes: prepared.videoBytes,
     video_bytes_base64: request.video_data_base64?.length ?? 0,
     timeout_ms: timeoutMs,
   };
@@ -262,12 +394,15 @@ export async function requestAIInference(
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const startedAt = Date.now();
     let response: Response;
+    // Rebuild multipart each attempt — FormData body streams are single-use.
+    const attemptPayload =
+      attempt === 1 ? prepared : buildInferenceHttpRequest(request);
 
     try {
       response = await fetchImpl(endpoint, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(request),
+        headers: attemptPayload.headers,
+        body: attemptPayload.body,
         signal: controller.signal,
       });
     } catch (error) {
@@ -316,29 +451,41 @@ export async function requestAIInference(
     if (!response.ok) {
       // A gateway status means the platform, not the AI application, refused the
       // request: the instance is asleep, booting, restarting, or out of memory.
+      // FastAPI inference errors return HTTP 200 with errors[]; a true 502 on
+      // this path is almost never an application ValidationError.
       const isGateway = gatewayStatuses.has(response.status);
-      const snippet = (await response.text().catch(() => ''))
-        .slice(0, bodySnippetLimit)
-        .trim();
+      const rawBody = await response.text().catch(() => '');
+      const snippet = sanitizeUpstreamBody(rawBody);
+      const likelyMidInferenceKill =
+        isGateway && elapsedMs >= retryBudgetMs;
       logFailure(logger, 'error', {
         ...shape,
         attempt,
         elapsed_ms: elapsedMs,
-        failure: isGateway ? 'gateway' : 'http_error',
+        failure: isGateway
+          ? likelyMidInferenceKill
+            ? 'gateway_mid_inference'
+            : 'gateway'
+          : 'http_error',
         status: response.status,
         body: snippet,
+        retry_eligible:
+          isGateway && !likelyMidInferenceKill && attempt < maxAttempts,
       });
-      if (isGateway && attempt < maxAttempts) {
+      if (isGateway && !likelyMidInferenceKill && attempt < maxAttempts) {
         await wait(retryDelayMs);
         continue;
       }
       throw new AIServiceError(
         'AI_SERVICE_HTTP_ERROR',
         isGateway
-          ? `The AI service is not accepting requests (HTTP ${response.status}). It may be starting up after being idle; try again in a moment.`
-          : `The AI service rejected the request with HTTP ${response.status}.`,
+          ? gatewayErrorMessage(response.status, elapsedMs, snippet, retryBudgetMs)
+          : `AI service returned HTTP ${response.status}${
+              snippet ? `: ${snippet}` : ''
+            }`,
         response.status,
-        isGateway,
+        isGateway && !likelyMidInferenceKill,
+        snippet || null,
       );
     }
 

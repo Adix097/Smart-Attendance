@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import EnrollmentConfig, InferenceConfig
+from app.logging_util import log_event, rss_mb
 from app.recognition.gallery import IMAGE_EXTENSIONS, EnrollmentGallery, load_gallery
 
 LIST_PAGE_SIZE = 100
@@ -139,6 +140,11 @@ def _sync(config: EnrollmentConfig) -> tuple[Path, int, int]:
     target = config.resolved_cache_dir()
     staging = target.parent / f"{target.name}.partial"
     shutil.rmtree(staging, ignore_errors=True)
+    log_event(
+        "gallery_sync_begin",
+        bucket=config.supabase_bucket,
+        rss_mb=rss_mb(),
+    )
 
     identities = 0
     images = 0
@@ -168,6 +174,12 @@ def _sync(config: EnrollmentConfig) -> tuple[Path, int, int]:
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
+    log_event(
+        "gallery_sync_complete",
+        identities=identities,
+        images=images,
+        rss_mb=rss_mb(),
+    )
     return target, identities, images
 
 
@@ -184,6 +196,7 @@ def load_enrollment_gallery(
     global _synced_dir
 
     if enrollment_config.source == "local":
+        log_event("gallery_load_local", path_exists=requested_dir.is_dir())
         return load_gallery(analysis, requested_dir)
 
     with _cache_lock:
@@ -193,8 +206,17 @@ def load_enrollment_gallery(
         key = _cache_key(_synced_dir, config)
         gallery = _gallery_cache.get(key)
         if gallery is None:
+            log_event("gallery_embeddings_build_begin", rss_mb=rss_mb())
             gallery = load_gallery(analysis, _synced_dir)
             _gallery_cache[key] = gallery
+            log_event(
+                "gallery_embeddings_build_complete",
+                identities=len(gallery.embeddings),
+                accepted_images=gallery.accepted_images,
+                rss_mb=rss_mb(),
+            )
+        else:
+            log_event("gallery_cache_hit", identities=len(gallery.embeddings))
         return gallery
 
 

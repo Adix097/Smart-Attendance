@@ -3,7 +3,9 @@ import { describe, it } from 'node:test';
 
 import {
   AIServiceError,
+  buildInferenceHttpRequest,
   requestAIInference,
+  sanitizeUpstreamBody,
   type AIInferenceRequest,
   type AIInferenceResponse,
 } from '../src/integrations/ai-service/index.js';
@@ -31,7 +33,7 @@ const responseBody: AIInferenceResponse = {
 };
 
 describe('AI service client', () => {
-  it('posts the request and parses a valid response', async () => {
+  it('posts a path request as JSON to /v1/inference', async () => {
     const result = await requestAIInference(request, {
       baseUrl: 'http://127.0.0.1:8000/',
       logger: { error: () => undefined, warn: () => undefined },
@@ -42,7 +44,45 @@ describe('AI service client', () => {
           new Headers(init?.headers).get('content-type'),
           'application/json',
         );
-        assert.equal(init?.body, JSON.stringify(request));
+        assert.equal(
+          init?.body,
+          JSON.stringify({
+            enrollment_dir: request.enrollment_dir,
+            video_path: request.video_path,
+          }),
+        );
+        return new Response(JSON.stringify(responseBody), { status: 200 });
+      },
+    });
+
+    assert.deepEqual(result, responseBody);
+  });
+
+  it('forwards uploads as multipart to /v1/inference/upload', async () => {
+    const upload: AIInferenceRequest = {
+      enrollment_dir: '/tmp/enrollment',
+      video_filename: 'class.mp4',
+      video_data_base64: Buffer.from('demo-video').toString('base64'),
+    };
+    const prepared = buildInferenceHttpRequest(upload);
+    assert.equal(prepared.transport, 'multipart');
+    assert.equal(prepared.path, '/v1/inference/upload');
+    assert.equal(prepared.videoBytes, Buffer.byteLength('demo-video'));
+
+    const result = await requestAIInference(upload, {
+      baseUrl: 'https://ai.example.com',
+      logger: { error: () => undefined, warn: () => undefined },
+      fetchImpl: async (input, init) => {
+        assert.equal(input, 'https://ai.example.com/v1/inference/upload');
+        assert.ok(init?.body instanceof FormData);
+        const form = init.body as FormData;
+        assert.equal(form.get('enrollment_dir'), '/tmp/enrollment');
+        const file = form.get('video');
+        assert.ok(file !== null && typeof file === 'object');
+        assert.ok(
+          typeof (file as Blob).arrayBuffer === 'function' ||
+            typeof (file as Blob).size === 'number',
+        );
         return new Response(JSON.stringify(responseBody), { status: 200 });
       },
     });
@@ -94,16 +134,52 @@ describe('AI service client', () => {
     assert.deepEqual(result, responseBody);
   });
 
-  it('reports an exhausted gateway failure as retryable without leaking the payload', async () => {
+  it('does not retry a gateway failure that exceeded the mid-inference budget', async () => {
+    let attempts = 0;
+    const logs: string[] = [];
+    await assert.rejects(
+      requestAIInference(request, {
+        retryDelayMs: 0,
+        gatewayRetryBudgetMs: 0,
+        logger: {
+          error: (line: string) => logs.push(line),
+          warn: () => undefined,
+        },
+        fetchImpl: async () => {
+          attempts += 1;
+          return new Response('worker timeout', { status: 502 });
+        },
+      }),
+      (error: unknown) =>
+        error instanceof AIServiceError &&
+        error.statusCode === 502 &&
+        error.retryable === false &&
+        /proxy timeout or out-of-memory/.test(error.message) &&
+        error.upstreamBody === 'worker timeout',
+    );
+
+    assert.equal(attempts, 1);
+    assert.match(logs[0], /gateway_mid_inference/);
+  });
+
+  it('reports an exhausted gateway failure with a sanitized upstream body', async () => {
     const logs: string[] = [];
     await assert.rejects(
       requestAIInference(
-        { ...request, video_filename: 'c.mp4', video_data_base64: 'c2VjcmV0LXZpZGVv' },
+        {
+          enrollment_dir: '/tmp/e',
+          video_filename: 'c.mp4',
+          video_data_base64: 'c2VjcmV0LXZpZGVv',
+        },
         {
           baseUrl: 'https://ai.example.com',
           retryDelayMs: 0,
-          logger: { error: (line: string) => logs.push(line), warn: () => undefined },
-          fetchImpl: async () => new Response('no healthy upstream', { status: 502 }),
+          logger: {
+            error: (line: string) => logs.push(line),
+            warn: () => undefined,
+          },
+          fetchImpl: async () =>
+            new Response('no healthy upstream', { status: 502 }),
         },
       ),
       (error: unknown) =>
@@ -111,17 +187,35 @@ describe('AI service client', () => {
         error.code === 'AI_SERVICE_HTTP_ERROR' &&
         error.statusCode === 502 &&
         error.retryable &&
-        /starting up/.test(error.message),
+        /AI service returned HTTP 502/.test(error.message) &&
+        /no healthy upstream/.test(error.message) &&
+        error.upstreamBody === 'no healthy upstream',
     );
 
     assert.equal(logs.length, 2, 'each attempt is logged');
     assert.match(logs[0], /ai\.example\.com/);
     assert.match(logs[0], /no healthy upstream/);
     assert.match(logs[0], /"failure":"gateway"/);
+    assert.match(logs[0], /"transport":"multipart"/);
     assert.ok(
       logs.every((line) => !line.includes('c2VjcmV0LXZpZGVv')),
       'the encoded recording must never be logged',
     );
+  });
+
+  it('sanitizes credentials and long base64 from upstream bodies', () => {
+    const raw = [
+      'Bearer super-secret-token-value',
+      '"apikey":"abc123"',
+      'password=hunter2',
+      'data:video/mp4;base64,' + 'A'.repeat(250),
+    ].join(' ');
+    const cleaned = sanitizeUpstreamBody(raw);
+    assert.ok(!cleaned.includes('super-secret-token-value'));
+    assert.ok(!cleaned.includes('abc123'));
+    assert.ok(!cleaned.includes('hunter2'));
+    assert.ok(!cleaned.includes('A'.repeat(100)));
+    assert.match(cleaned, /redacted/i);
   });
 
   it('warns when AI_SERVICE_URL points at this host', async () => {
@@ -154,7 +248,8 @@ describe('AI service client', () => {
       (error: unknown) =>
         error instanceof AIServiceError &&
         error.code === 'AI_SERVICE_HTTP_ERROR' &&
-        error.retryable === false,
+        error.retryable === false &&
+        /AI service returned HTTP 500/.test(error.message),
     );
 
     assert.equal(attempts, 1);

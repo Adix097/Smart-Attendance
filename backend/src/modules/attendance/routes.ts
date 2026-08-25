@@ -519,6 +519,8 @@ export function createAttendanceRouter({
           time_zone: config.timeZone,
           code,
           status: error instanceof AIServiceError ? error.statusCode ?? null : null,
+          upstream_body:
+            error instanceof AIServiceError ? error.upstreamBody : null,
           message,
         })}`,
       );

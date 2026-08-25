@@ -1,7 +1,9 @@
 export {
   AIServiceError,
+  buildInferenceHttpRequest,
   requestAIInference,
   safeAiServiceOrigin,
+  sanitizeUpstreamBody,
 } from './client.js';
 export type {
   AIInferenceRequest,

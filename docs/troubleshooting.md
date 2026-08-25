@@ -17,9 +17,25 @@ Locally, use the Vite dev server (it handles SPA fallback). Opening a built `ind
 
 Symptoms: intermittent HTTP 502/503/504, long first request.
 
-- Wait and retry (backend already retries gateway statuses).
+- Wait and retry (backend retries **fast** gateway statuses; long mid-inference 502s are not retried).
 - Hit `/health` once to wake the service.
 - Increase `AI_SERVICE_TIMEOUT_MS` if inference itself is slow after wake.
+- Confirm AI startup logs show `preload_complete` so the first upload is not also loading InsightFace + gallery.
+
+## Health works but video inference returns 502
+
+`/health` and `/api/ai/health` only prove the process is up. Inference is a different path.
+
+| Signal | Likely source |
+| --- | --- |
+| FastAPI returns HTTP 200 with `errors[]` | Application failure inside AI (bad video, empty gallery, etc.) |
+| HTTP 502/503/504 with HTML/`no healthy upstream` and short elapsed time | Render proxy: cold start / restart |
+| HTTP 502 after ~30–100s with large video | Render proxy timeout or OOM kill during inference |
+| Backend message `AI service returned HTTP 502` + sanitized `Upstream: …` | Backend correctly saw a non-2xx from the AI hop (not inventing 502) |
+
+Check AI service logs for `inference_request` → `temp_video_created` → `video_processing_start`. If logs stop mid-flight and the instance restarts, treat it as OOM/timeout, not a FastAPI validation bug.
+
+Also confirm the backend was redeployed to send multipart to `/v1/inference/upload` and the AI service includes `python-multipart`.
 
 ## Supabase authentication failure (Storage)
 
