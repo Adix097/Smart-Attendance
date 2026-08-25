@@ -281,7 +281,10 @@ export function createAttendanceRouter({
     const existing = await repository.getAttendanceSessionForClass(
       request.body.class_session_id,
     );
-    if (existing) {
+    // Idempotent re-create: reuse open/processing/completed sessions as-is.
+    // A prior 'failed' row must be reset — otherwise the UI keeps showing a
+    // stale processing_error from an earlier AI attempt.
+    if (existing && existing.status !== 'failed') {
       response.json(sessionResponse(existing));
       return;
     }
@@ -292,7 +295,7 @@ export function createAttendanceRouter({
       status: 'open',
     });
     await repository.createAttendanceContext(session.id, session.classSessionId);
-    response.status(201).json(sessionResponse(session));
+    response.status(existing ? 200 : 201).json(sessionResponse(session));
   });
 
   router.post('/attendance-sessions/:id/process', async (request, response) => {

@@ -28,7 +28,11 @@ import type {
 } from '../src/modules/attendance/types.js';
 
 class MockAttendanceRepository implements AttendanceRepository {
-  readonly classSessions = new Set(['class-1']);
+  readonly classSessions = new Set([
+    'class-1',
+    'class-failed-reset',
+    'class-reuse-open',
+  ]);
   readonly enrolled = new Map([['class-1', ['student-a', 'student-b', 'student-c']]]);
   readonly sessions = new Map<string, AttendanceSession>();
   readonly observations: AttendanceObservation[] = [];
@@ -171,7 +175,13 @@ class MockAttendanceRepository implements AttendanceRepository {
     const existing = [...this.sessions.values()].find(
       (session) => session.classSessionId === input.classSessionId,
     );
-    if (existing) return Promise.resolve(existing);
+    if (existing) {
+      if (existing.status === 'failed') {
+        existing.status = input.status ?? 'open';
+        existing.processingError = null;
+      }
+      return Promise.resolve(existing);
+    }
     const session: AttendanceSession = {
       id: input.id,
       classSessionId: input.classSessionId,
@@ -446,6 +456,49 @@ describe('attendance session API', () => {
     assert.equal(body.class_session_id, 'class-1');
     assert.equal(body.status, 'pending');
     assert.equal(typeof body.id, 'string');
+  });
+
+  it('resets a previously failed session instead of returning the stale error', async () => {
+    const failed = await repository.createAttendanceSession({
+      id: 'stale-failed',
+      classSessionId: 'class-failed-reset',
+      status: 'open',
+    });
+    await repository.updateAttendanceSessionStatus(
+      failed.id,
+      'failed',
+      "Model 'buffalo_l' is too large for a 512MiB instance",
+    );
+
+    const response = await postJson('/api/attendance-sessions', {
+      class_session_id: 'class-failed-reset',
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.id, failed.id);
+    assert.equal(body.status, 'pending');
+    assert.equal(body.error, null);
+
+    const stored = await repository.getAttendanceSession(failed.id);
+    assert.equal(stored?.status, 'open');
+    assert.equal(stored?.processingError, null);
+  });
+
+  it('reuses an open session without clearing it', async () => {
+    const first = await postJson('/api/attendance-sessions', {
+      class_session_id: 'class-reuse-open',
+    });
+    const created = await first.json();
+
+    const second = await postJson('/api/attendance-sessions', {
+      class_session_id: 'class-reuse-open',
+    });
+    const reused = await second.json();
+
+    assert.equal(second.status, 200);
+    assert.equal(reused.id, created.id);
+    assert.equal(reused.status, 'pending');
   });
 
   it('persists all evidence and provisional recognized attendance', async () => {

@@ -479,7 +479,15 @@ export class PgAttendanceRepository implements AttendanceRepository {
       `INSERT INTO attendance_sessions (id, class_session_id, status)
        VALUES ($1, $2, $3)
        ON CONFLICT (class_session_id)
-       DO UPDATE SET class_session_id = EXCLUDED.class_session_id
+       DO UPDATE SET
+         status = CASE
+           WHEN attendance_sessions.status = 'failed' THEN EXCLUDED.status
+           ELSE attendance_sessions.status
+         END,
+         processing_error = CASE
+           WHEN attendance_sessions.status = 'failed' THEN NULL
+           ELSE attendance_sessions.processing_error
+         END
        RETURNING id, class_session_id, status, processing_error`,
       [input.id, input.classSessionId, input.status ?? 'open'],
     );
