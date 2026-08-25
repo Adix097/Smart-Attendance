@@ -48,7 +48,7 @@ export default function useAttendance(selectedClassId: string) {
         setError(cause instanceof Error ? cause.message : 'Unable to read processing status');
         window.clearInterval(timer);
       }
-    }, 1500);
+    }, 5000);
     return () => window.clearInterval(timer);
   }, [loadEvidence, session]);
 
@@ -66,6 +66,10 @@ export default function useAttendance(selectedClassId: string) {
     setError('');
     if (!selectedClassId) {
       setError('Select a scheduled class before creating an attendance session.');
+      setBusy(false);
+      return;
+    }
+    if (session?.class_session_id === selectedClassId) {
       setBusy(false);
       return;
     }

@@ -29,6 +29,10 @@ import {
 } from './schedule.js';
 import { config } from '../../config.js';
 
+/** Avoid re-expanding the whole timetable on every class-list refresh. */
+const ensureUpcomingMinIntervalMs = 60_000;
+let lastEnsureUpcomingAt = 0;
+
 function sessionFromRow(row: {
   id: string;
   class_session_id: string;
@@ -266,6 +270,12 @@ export class PgAttendanceRepository implements AttendanceRepository {
   }
 
   async ensureUpcomingClassSession(): Promise<void> {
+    const nowMs = Date.now();
+    if (nowMs - lastEnsureUpcomingAt < ensureUpcomingMinIntervalMs) {
+      return;
+    }
+    lastEnsureUpcomingAt = nowMs;
+
     const result = await this.database.query(
       `SELECT te.id, te.course_id, te.faculty_id, te.classroom_id, te.room,
               te.day_of_week, te.start_time, te.end_time
@@ -474,6 +484,18 @@ export class PgAttendanceRepository implements AttendanceRepository {
       [input.id, input.classSessionId, input.status ?? 'open'],
     );
     return sessionFromRow(result.rows[0]);
+  }
+
+  async getAttendanceSessionForClass(
+    classSessionId: string,
+  ): Promise<AttendanceSession | null> {
+    const result = await this.database.query(
+      `SELECT id, class_session_id, status, processing_error
+       FROM attendance_sessions
+       WHERE class_session_id = $1`,
+      [classSessionId],
+    );
+    return result.rows[0] ? sessionFromRow(result.rows[0]) : null;
   }
 
   async getAttendanceSession(id: string): Promise<AttendanceSession | null> {

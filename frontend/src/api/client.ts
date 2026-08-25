@@ -16,6 +16,13 @@ function errorMessage(body: unknown, status: number): string {
   return `Request failed with HTTP ${status}`;
 }
 
+function statusHint(status: number): string | null {
+  if (status === 429) {
+    return 'Too many requests. Wait a few seconds and try again — do not keep clicking Create.';
+  }
+  return null;
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -28,6 +35,8 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   const body: unknown = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(errorMessage(body, response.status));
+  if (!response.ok) {
+    throw new Error(statusHint(response.status) ?? errorMessage(body, response.status));
+  }
   return body as T;
 }

@@ -10,4 +10,8 @@ export const pool = new Pool({
   user: config.databaseUrl ? undefined : config.databaseUser,
   password: config.databaseUrl ? undefined : config.databasePassword,
   ssl: config.databaseSsl ? { rejectUnauthorized: false } : undefined,
+  // Supabase (and similar free pools) reject bursts of connections with HTTP 429.
+  max: 5,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 15_000,
 });

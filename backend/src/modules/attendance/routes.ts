@@ -278,6 +278,14 @@ export function createAttendanceRouter({
       return;
     }
 
+    const existing = await repository.getAttendanceSessionForClass(
+      request.body.class_session_id,
+    );
+    if (existing) {
+      response.json(sessionResponse(existing));
+      return;
+    }
+
     const session = await repository.createAttendanceSession({
       id: crypto.randomUUID(),
       classSessionId: request.body.class_session_id,

@@ -182,6 +182,14 @@ class MockAttendanceRepository implements AttendanceRepository {
     return Promise.resolve(session);
   }
 
+  getAttendanceSessionForClass(classSessionId: string): Promise<AttendanceSession | null> {
+    return Promise.resolve(
+      [...this.sessions.values()].find(
+        (session) => session.classSessionId === classSessionId,
+      ) ?? null,
+    );
+  }
+
   getAttendanceSession(id: string): Promise<AttendanceSession | null> {
     return Promise.resolve(this.sessions.get(id) ?? null);
   }

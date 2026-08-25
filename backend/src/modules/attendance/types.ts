@@ -170,6 +170,9 @@ export interface AttendanceRepository {
   createAttendanceSession(
     input: CreateAttendanceSessionInput,
   ): Promise<AttendanceSession>;
+  getAttendanceSessionForClass(
+    classSessionId: string,
+  ): Promise<AttendanceSession | null>;
   getAttendanceSession(id: string): Promise<AttendanceSession | null>;
   updateAttendanceSessionStatus(
     id: string,

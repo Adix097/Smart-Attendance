@@ -13,7 +13,7 @@ export const defaultVerificationConfig: VerificationConfig = {
   minimumPresenceDurationSeconds: 30,
   requiredEndPresenceSeconds: 60,
   lateEntryMinutes: 15,
-  sightingIntervalSeconds: 15,
+  sightingIntervalSeconds: 60,
 };
 
 export interface AttendanceSighting {

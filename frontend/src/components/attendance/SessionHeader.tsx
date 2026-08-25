@@ -47,9 +47,9 @@ export default function SessionHeader({
         <button
           className="rounded-lg bg-blue-700 px-4 py-2.5 font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
           onClick={onCreate}
-          disabled={busy || !selectedClass}
+          disabled={busy || !selectedClass || Boolean(session)}
         >
-          {session ? 'Use attendance session' : 'Create attendance session'}
+          {session ? 'Attendance session ready' : 'Create attendance session'}
         </button>
         {session && <small className="text-xs text-slate-500">{session.id}</small>}
       </div>
