@@ -44,7 +44,22 @@ _HEAVY_MODELS = frozenset({"buffalo_l", "buffalo_m", "antelopev2"})
 
 
 def _allow_heavy_models() -> bool:
-    return os.getenv("AI_ALLOW_HEAVY_MODELS", "").lower() == "true"
+    """Heavy packs are blocked on memory-constrained hosts, not on a normal laptop.
+
+    Render sets RENDER=true. Local Vite/backend against a local AI service should
+    still be able to run buffalo_l if the operator chooses it in .env.
+    """
+    if os.getenv("AI_ALLOW_HEAVY_MODELS", "").lower() == "true":
+        return True
+    if os.getenv("AI_ALLOW_HEAVY_MODELS", "").lower() == "false":
+        return False
+    # Explicit 512MiB guard for any host (useful when testing the free-tier path).
+    if os.getenv("AI_ENFORCE_MEMORY_BUDGET", "").lower() == "true":
+        return False
+    # Managed Render instances are the constrained deployment target.
+    if os.getenv("RENDER", "").lower() == "true":
+        return False
+    return True
 
 
 def _configure_onnx_runtime() -> None:

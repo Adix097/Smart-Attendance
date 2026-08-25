@@ -26,7 +26,8 @@ Placeholders only. Never commit real secrets.
 | `AI_PROVIDER` | Must be `CPUExecutionProvider` for this MVP. |
 | `AI_DET_SIZE` | Detector square edge. Default `320`. |
 | `AI_MAX_DETECTION_SIDE` | Max frame side before detection resize. Default `960`. |
-| `AI_ALLOW_HEAVY_MODELS` | Exact `true` allows `buffalo_l` / `buffalo_m` / `antelopev2` (needs >512MiB). |
+| `AI_ALLOW_HEAVY_MODELS` | `true`/`false` override. On Render, heavy packs are blocked unless this is `true`. Locally they are allowed by default. |
+| `AI_ENFORCE_MEMORY_BUDGET` | Exact `true` blocks `buffalo_l` even on a laptop (useful to mimic free Render). |
 | `AI_SAMPLING_FPS` | Frame sampling rate. Default `2.0`. |
 | `AI_ACCEPTANCE_THRESHOLD` | Default `0.45`. |
 | `AI_UNKNOWN_THRESHOLD` | Default `0.35`. |

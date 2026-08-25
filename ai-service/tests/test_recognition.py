@@ -98,11 +98,33 @@ class RecognitionTests(unittest.TestCase):
         ids = tracker.update([Box(0, 0, 10, 10), Box(100, 100, 10, 10)], 0)
         self.assertEqual(len(set(ids)), 2)
 
-    def test_heavy_models_are_rejected_on_the_512mib_budget(self) -> None:
+    def test_heavy_models_are_rejected_when_the_memory_budget_is_enforced(self) -> None:
+        import os
+        from unittest.mock import patch
+
         from app.pipelines.recognition import build_analysis
 
-        with self.assertRaisesRegex(ValueError, "too large for a 512MiB instance"):
-            build_analysis(config(model_name="buffalo_l"))
+        with patch.dict(
+            os.environ,
+            {"AI_ENFORCE_MEMORY_BUDGET": "true", "AI_ALLOW_HEAVY_MODELS": ""},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "too large for a 512MiB instance"):
+                build_analysis(config(model_name="buffalo_l"))
+
+    def test_heavy_models_are_rejected_on_render_by_default(self) -> None:
+        import os
+        from unittest.mock import patch
+
+        from app.pipelines.recognition import build_analysis
+
+        with patch.dict(
+            os.environ,
+            {"RENDER": "true", "AI_ALLOW_HEAVY_MODELS": "", "AI_ENFORCE_MEMORY_BUDGET": ""},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "too large for a 512MiB instance"):
+                build_analysis(config(model_name="buffalo_l"))
 
     def test_downscales_oversized_frames_for_detection(self) -> None:
         from app.pipelines.recognition import _downscale_for_detection
