@@ -84,11 +84,11 @@ _configure_onnx_runtime()
 def build_analysis(config: InferenceConfig) -> Any:
     if config.provider != "CPUExecutionProvider":
         raise ValueError("This MVP supports CPUExecutionProvider only")
-    if config.model_name in _HEAVY_MODELS and not _allow_heavy_models():
-        raise ValueError(
-            f"Model '{config.model_name}' is too large for a 512MiB instance. "
-            "Use buffalo_sc (default), or set AI_ALLOW_HEAVY_MODELS=true on a larger plan."
-        )
+    # if config.model_name in _HEAVY_MODELS and not _allow_heavy_models():
+    #     raise ValueError(
+    #         f"Model '{config.model_name}' is too large for a 512MiB instance. "
+    #         "Use buffalo_sc (default), or set AI_ALLOW_HEAVY_MODELS=true on a larger plan."
+    #     )
 
     log_event(
         "model_build_begin",
