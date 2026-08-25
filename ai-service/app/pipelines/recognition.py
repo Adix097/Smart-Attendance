@@ -230,6 +230,9 @@ def run_video_inference(
                     detect_height=height,
                     det_size=config.det_size,
                     scale=round(scale, 4),
+                    # Cheap fingerprint: identical values across a changing
+                    # classroom video strongly suggest stuck VideoCapture decode.
+                    frame_signature=int(detect_frame.mean() * 1000),
                 )
             inv = 1.0 / scale
             boxes: list[Box] = []

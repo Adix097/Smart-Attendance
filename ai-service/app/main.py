@@ -84,6 +84,14 @@ def _preload() -> None:
     ONNX session build, Supabase sync, and video decode in one request — which
     commonly trips the proxy timeout or the memory limit and surfaces as 502.
     """
+    import cv2
+
+    build_info = cv2.getBuildInformation()
+    log_event(
+        "cv2_diagnostics",
+        cv2_file=cv2.__file__,
+        has_ffmpeg="FFMPEG:  YES" in build_info,
+    )
     log_event(
         "preload_begin",
         enrollment_source=enrollment_settings.source,

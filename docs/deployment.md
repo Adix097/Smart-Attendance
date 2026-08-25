@@ -45,6 +45,28 @@ Must set:
 
 Web service from `ai-service/`.
 
+There is **no** `render.yaml` / `Procfile` in this repo — build/start are set in the Render dashboard.
+
+**Build Command** (paste exactly):
+
+```bash
+chmod +x build.sh && ./build.sh
+```
+
+Equivalent one-liner if you prefer not to use `build.sh`:
+
+```bash
+pip install -r requirements.txt && pip uninstall -y opencv-python
+```
+
+`build.sh` installs requirements then removes the full `opencv-python` wheel that `insightface` pulls in transitively, leaving only `opencv-python-headless` as `cv2`.
+
+**Start Command** (typical):
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
 Must set:
 
 - `HOST` unset or `0.0.0.0`
@@ -54,6 +76,7 @@ Must set:
 - `SUPABASE_SERVICE_ROLE_KEY` (server secret)
 - `SUPABASE_STORAGE_BUCKET=enrollment`
 - optional recognition thresholds / `ENROLLMENT_CACHE_DIR`
+- Prefer `AI_MODEL_NAME=buffalo_sc` on free (512MiB) instances
 
 Never put the service-role key in the frontend.
 

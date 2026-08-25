@@ -4,6 +4,9 @@ python-dotenv>=1.0,<2
 python-multipart>=0.0.9,<1
 insightface==1.0.1
 onnxruntime
-# Headless build avoids GUI/ffmpeg extras that inflate the image on Render.
+# Prefer the headless wheel. insightface==1.0.1 also pulls opencv-python
+# transitively — do NOT leave both installed (conflicting cv2 native bindings /
+# unreliable VideoCapture). After `pip install -r requirements.txt`, run
+# `pip uninstall -y opencv-python` (see build.sh / Render Build Command).
 opencv-python-headless
 numpy

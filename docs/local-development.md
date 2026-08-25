@@ -38,8 +38,11 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
+pip uninstall -y opencv-python
 python -m app.main
 ```
+
+(`insightface` may install full `opencv-python`; uninstall it so only `opencv-python-headless` provides `cv2`.)
 
 Default: `http://127.0.0.1:8000` (binds `0.0.0.0` unless you override `HOST`).
 
